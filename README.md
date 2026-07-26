@@ -16,13 +16,13 @@
 ## 📷 界面预览 / Interface Screenshots
 
 ### 🖥️ 1. 电脑端界面 (桌面侧边栏与双栏对话测试)
-![电脑端界面预览](desktop_preview.jpg)
+![电脑端界面预览](desktop_preview.png)
 
 ### 📱 2. 手机端界面 (响应式移动端体验)
 <p align="center">
-  <img src="mobile_preview_1.jpg" width="45%" alt="手机端 - 提示词版本与多意图编辑" />
+  <img src="mobile_preview_1.png" width="45%" alt="手机端 - 提示词版本与多意图编辑" />
   &nbsp;&nbsp;
-  <img src="mobile_preview_2.jpg" width="45%" alt="手机端 - 对话测试与评估" />
+  <img src="mobile_preview_2.png" width="45%" alt="手机端 - 对话测试与评估" />
 </p>
 
 ---
