@@ -1,0 +1,17 @@
+{
+  "name": "ai-customer-service-eval",
+  "version": "1.0.0",
+  "description": "面向电商与二手交易场景的通用 AI 客服评估与测试平台",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'Build complete'",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.23.1"
+  }
+}
