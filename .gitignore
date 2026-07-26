@@ -1,15 +1,22 @@
 ```
-# Dependencies
-node_modules/
-
-# Environment variables
+# Environment
 .env
 .env.local
 .env.*
 
-# Database files
-data/db.json
+# Dependencies
+node_modules/
 
-# Package lock file
-package-lock.json
+# Local persistence data
+data/
+
+# OS and temp files
+.DS_Store
+*.log
+*.tmp
+
+# Editors
+.vscode/
+.idea/
+
 ```
