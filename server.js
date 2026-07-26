@@ -333,7 +333,7 @@ const handleProductsRequest = async (req, res, resourceId) => {
   return res.status(405).json({ error: 'Method not allowed' });
 };
 
-const handleSessionsRequest = (req, res, resourceId) => {
+const handleSessionsRequest = async (req, res, resourceId) => {
   const method = req.method;
   const id = resourceId ? parseInt(resourceId, 10) : (req.params.id ? parseInt(req.params.id, 10) : null);
 
@@ -383,10 +383,10 @@ const handleSessionsRequest = (req, res, resourceId) => {
 
     if (storageMode === 'mysql' && dbPool) {
       try {
-        dbPool.query(
+        await dbPool.query(
           'INSERT INTO eval_sessions (product_id, chat_history, bargain_count) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE chat_history=VALUES(chat_history), bargain_count=VALUES(bargain_count)',
           [pid, historyStr, chatSessions[pid].bargain_count]
-        ).catch(e => console.error('[MySQL Session Sync Error]', e.message));
+        );
       } catch (e) {
         console.error('[MySQL Session Sync Error]', e.message);
       }
@@ -401,7 +401,11 @@ const handleSessionsRequest = (req, res, resourceId) => {
       const pid = chatSessions[key].product_id;
       delete chatSessions[key];
       if (storageMode === 'mysql' && dbPool && pid) {
-        dbPool.query('DELETE FROM eval_sessions WHERE product_id=?', [pid]).catch(e => console.error('[MySQL Session Delete Error]', e.message));
+        try {
+          await dbPool.query('DELETE FROM eval_sessions WHERE product_id=?', [pid]);
+        } catch (e) {
+          console.error('[MySQL Session Delete Error]', e.message);
+        }
       }
     }
     saveToFile();
@@ -541,8 +545,8 @@ const handleDbStatusRequest = (req, res) => {
 };
 
 // API Routes
-app.all('/api/products/:id?', (req, res) => handleProductsRequest(req, res));
-app.all('/api/sessions/:id?', (req, res) => handleSessionsRequest(req, res));
+app.all('/api/products/:id?', (req, res) => handleProductsRequest(req, res, req.params.id));
+app.all('/api/sessions/:id?', (req, res) => handleSessionsRequest(req, res, req.params.id));
 app.all('/api/config', (req, res) => handleConfigRequest(req, res));
 app.all('/api/chat', (req, res) => handleChatRequest(req, res));
 app.all('/api/proxy', (req, res) => handleProxyRequest(req, res));
