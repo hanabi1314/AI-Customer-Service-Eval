@@ -1,1 +1,1642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>通用 AI 客服评估测试平台 | Universal AI Customer Service Eval Platform</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0f172a',
+                        darkcard: '#1e293b',
+                        darkborder: '#334155'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; min-height: 100dvh; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        .chat-container { display: flex; flex-direction: column; height: 100%; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 1rem; }
+        .message { margin-bottom: 1rem; max-width: 88%; padding: 0.75rem 1rem; border-radius: 1rem; }
+        .message.user { background: #2563eb; color: white; align-self: flex-end; margin-left: auto; border-bottom-right-radius: 0.25rem; }
+        .message.assistant { background: #ffffff; color: #1f2937; align-self: flex-start; border-bottom-left-radius: 0.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e5e7eb; }
+        .dark .message.assistant { background: #334155; color: #f8fafc; border-color: #475569; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+        .chat-input { border-top: 1px solid #e5e7eb; padding: 0.875rem 1rem; }
+        .dark .chat-input { border-color: #475569; background-color: #1e293b; }
+        .debug-panel { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.8rem; }
+        .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: 600; background-color: #f8fafc; }
+        .dark .tab-active { border-bottom-color: #60a5fa; color: #60a5fa; background-color: #334155; }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        .dark ::-webkit-scrollbar-track { background: #1e293b; }
+    </style>
+</head>
+<body class="h-[100dvh] h-screen overflow-hidden antialiased transition-colors duration-200 bg-slate-100 text-slate-800">
+    <div id="app" class="h-[100dvh] h-full flex flex-col md:flex-row overflow-hidden relative bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100" :class="{ dark: isDarkMode }">
+        
+        <!-- 全局 Toast 提示 -->
+        <transition enter-active-class="transform ease-out duration-300 transition" enter-from-class="translate-y-2 opacity-0 sm:translate-y-0 sm:translate-x-2" enter-to-class="translate-y-0 opacity-100 sm:translate-x-0" leave-active-class="transition ease-in duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
+            <div v-if="toast.show" :class="['fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-center gap-2', toast.type === 'error' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950 dark:border-red-800 dark:text-red-200' : 'bg-slate-900 border-slate-800 text-white dark:bg-slate-800 dark:border-slate-700']">
+                <span>{{ toast.type === 'error' ? '⚠️' : '✨' }}</span>
+                <span>{{ toast.message }}</span>
+            </div>
+        </transition>
 
+        <!-- 自定义确认弹窗 (无 window.confirm 阻断问题) -->
+        <div v-if="confirmModal.show" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 max-w-sm w-full p-5 space-y-4 transform transition-all max-h-[90dvh] overflow-y-auto">
+                <div class="flex items-center gap-3">
+                    <div :class="['w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-lg font-bold', confirmModal.danger ? 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400' : 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400']">
+                        {{ confirmModal.danger ? '🗑️' : '❓' }}
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-800 dark:text-slate-100 text-base">{{ confirmModal.title }}</h3>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">{{ confirmModal.message }}</p>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2.5 pt-2">
+                    <button @click="confirmModal.show = false" class="px-4 py-2 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                        {{ confirmModal.cancelText || t('cancel') }}
+                    </button>
+                    <button @click="executeConfirmModal" :class="['px-4 py-2 rounded-xl text-xs font-medium text-white transition-colors shadow-sm', confirmModal.danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700']">
+                        {{ confirmModal.confirmText || t('confirm') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导入/导出 JSON 弹窗 -->
+        <div v-if="importExportModal.show" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 max-w-lg w-full p-5 space-y-4 max-h-[90dvh] overflow-y-auto">
+                <div class="flex justify-between items-center border-b dark:border-slate-700 pb-3">
+                    <h3 class="font-bold text-slate-800 dark:text-slate-100 text-sm flex items-center gap-1.5">
+                        <span>📦</span> {{ t('importExportTitle') }}
+                    </h3>
+                    <button @click="importExportModal.show = false" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm">✕</button>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">{{ t('jsonLabel') }}</label>
+                    <textarea v-model="importExportModal.jsonText" rows="10" class="w-full bg-slate-900 text-emerald-300 font-mono text-xs rounded-xl p-3 border border-slate-700 focus:ring-2 focus:ring-purple-500"></textarea>
+                </div>
+                <div class="flex justify-between items-center gap-2 pt-1">
+                    <button @click="copyModalJson" class="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium rounded-xl hover:bg-slate-200">
+                        📋 {{ t('copyClipboard') }}
+                    </button>
+                    <div class="flex gap-2">
+                        <button @click="importExportModal.show = false" class="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs rounded-xl">{{ t('cancel') }}</button>
+                        <button @click="applyImportJson" class="px-4 py-2 bg-purple-600 text-white text-xs font-medium rounded-xl hover:bg-purple-700 shadow-sm">
+                            📥 {{ t('importSaveNew') }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 移动端顶部视图切换与操作统一导航栏 -->
+        <div class="md:hidden bg-slate-800 text-white px-3 py-2.5 flex justify-between items-center shrink-0 border-b border-slate-700">
+            <h1 class="text-xs font-bold flex items-center gap-1.5 min-w-0">
+                <span>🤖</span>
+                <span class="truncate max-w-[110px] sm:max-w-none">{{ t('appTitle') }}</span>
+            </h1>
+            <div class="flex items-center gap-2 shrink-0">
+                <button @click="toggleTheme" class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors border border-slate-600" :title="t('themeTooltip')">
+                    {{ isDarkMode ? '☀️' : '🌙' }}
+                </button>
+                <button @click="toggleLang" class="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg font-mono transition-colors border border-slate-600" :title="t('langTooltip')">
+                    {{ currentLang === 'zh' ? 'EN' : '中文' }}
+                </button>
+                <div class="flex bg-slate-700 p-0.5 rounded-lg text-xs border border-slate-600">
+                    <button @click="activeMobileView = 'sidebar'" :class="['px-2.5 py-1 rounded transition-all font-medium', activeMobileView === 'sidebar' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-300 hover:text-white']">{{ t('navConfig') }}</button>
+                    <button @click="activeMobileView = 'chat'" :class="['px-2.5 py-1 rounded transition-all font-medium relative', activeMobileView === 'chat' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-300 hover:text-white']">
+                        {{ t('navChat') }}
+                        <span v-if="selectedProduct && activeMobileView !== 'chat'" class="w-2 h-2 rounded-full bg-emerald-400 absolute -top-0.5 -right-0.5"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 左侧配置与商品面板 (修复移动端 flex 容器高度：使用 flex-1 min-h-0 防止底部溢出被裁切) -->
+        <div :class="['w-full md:w-[440px] lg:w-[480px] bg-white dark:bg-slate-800 shadow-xl flex flex-col border-r border-slate-200 dark:border-slate-700 flex-1 min-h-0 h-full md:h-full overflow-hidden transition-all', activeMobileView === 'sidebar' ? 'flex' : 'hidden md:flex']">
+            <!-- 平台标题头 (桌面端显示，移动端隐藏避免重复) -->
+            <div class="hidden md:block p-4 border-b dark:border-slate-700 bg-gradient-to-r from-slate-800 via-slate-800 to-indigo-900 text-white shrink-0">
+                <div class="flex items-center justify-between">
+                    <h1 class="text-base md:text-lg font-bold flex items-center gap-2">
+                        <span>🤖</span> {{ t('appTitle') }}
+                    </h1>
+                    <!-- 灰色/暗黑模式 + 中英文切换按钮 -->
+                    <div class="flex items-center gap-1.5">
+                        <button @click="toggleTheme" class="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-medium transition-colors border border-white/20 flex items-center gap-1" :title="t('themeTooltip')">
+                            <span>{{ isDarkMode ? '☀️' : '🌙' }}</span>
+                            <span class="hidden sm:inline">{{ isDarkMode ? t('lightMode') : t('darkMode') }}</span>
+                        </button>
+                        <button @click="toggleLang" class="px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-medium transition-colors border border-white/20 font-mono" :title="t('langTooltip')">
+                            🌐 {{ currentLang === 'zh' ? 'EN' : '中文' }}
+                        </button>
+                    </div>
+                </div>
+                <p class="text-blue-200/90 text-xs mt-1">{{ t('appSubtitle') }}</p>
+            </div>
+            
+            <!-- 标签页导航 (修复：使用 4 列网格布局，确保移动端及各种屏幕下 4 个 Tab 按钮全部完全平铺展示) -->
+            <div class="grid grid-cols-4 w-full border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shrink-0 text-xs font-medium">
+                <button @click="currentTab = 'product'" :class="['py-2.5 px-1 text-center transition-colors flex items-center justify-center gap-1 min-w-0', currentTab === 'product' ? 'tab-active' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200']">
+                    <span>📦</span>
+                    <span class="truncate text-[11px] sm:text-xs">{{ t('tabProducts') }}</span>
+                    <span class="hidden sm:inline text-[10px] opacity-75">({{ products.length }})</span>
+                </button>
+                <button @click="currentTab = 'api'" :class="['py-2.5 px-1 text-center transition-colors flex items-center justify-center gap-1 min-w-0', currentTab === 'api' ? 'tab-active' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200']">
+                    <span>⚡</span>
+                    <span class="truncate text-[11px] sm:text-xs">{{ t('tabApi') }}</span>
+                </button>
+                <button @click="currentTab = 'intent'" :class="['py-2.5 px-1 text-center transition-colors flex items-center justify-center gap-1 min-w-0', currentTab === 'intent' ? 'tab-active' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200']">
+                    <span>🎯</span>
+                    <span class="truncate text-[11px] sm:text-xs">{{ t('tabIntent') }}</span>
+                </button>
+                <button @click="currentTab = 'prompt'" :class="['py-2.5 px-1 text-center transition-colors flex items-center justify-center gap-1 relative min-w-0', currentTab === 'prompt' ? 'tab-active' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200']">
+                    <span>📝</span>
+                    <span class="truncate text-[11px] sm:text-xs">{{ t('tabPrompts') }}</span>
+                    <span v-if="promptVersions.length > 1" class="hidden sm:inline-block bg-purple-100 text-purple-700 dark:bg-purple-900/80 dark:text-purple-200 font-bold text-[9px] px-1 py-0.2 rounded-full border border-purple-200 dark:border-purple-700">
+                        {{ promptVersions.length }}
+                    </span>
+                </button>
+            </div>
+            
+            <!-- Tab 1: API & 议价策略面板 -->
+            <div v-show="currentTab === 'api'" class="flex-1 overflow-y-auto p-4 space-y-5 pb-16 sm:pb-8">
+                <div class="bg-slate-50 dark:bg-slate-700/60 p-3.5 rounded-xl border border-slate-200/80 dark:border-slate-600 space-y-3">
+                    <h3 class="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-blue-600"></span> {{ t('apiSettingTitle') }}
+                    </h3>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">{{ t('providerType') }}</label>
+                        <select v-model="config.provider_type" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                            <option value="openai_compatible">OpenAI Compatible (DeepSeek/Qwen/ChatGLM)</option>
+                            <option value="dashscope_app">DashScope (Alibaba Cloud)</option>
+                            <option value="gemini">Google Gemini</option>
+                            <option value="anthropic">Anthropic Claude</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Base URL</label>
+                        <input v-model="config.base_url" type="text" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" placeholder="https://api.openai.com/v1">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">API Key</label>
+                        <input v-model="config.api_key" type="password" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 font-mono" placeholder="sk-...">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Model Name</label>
+                        <input v-model="config.model_name" type="text" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" placeholder="qwen-plus / gpt-4o">
+                    </div>
+                </div>
+                
+                <div class="bg-slate-50 dark:bg-slate-700/60 p-3.5 rounded-xl border border-slate-200/80 dark:border-slate-600 space-y-3">
+                    <h3 class="text-xs font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-amber-500"></span> {{ t('bargainStrategyTitle') }}
+                    </h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs text-slate-600 dark:text-slate-300 mb-1">{{ t('maxDiscountPct') }}</label>
+                            <input v-model.number="config.max_discount_percent" type="number" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" min="0" max="100">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-600 dark:text-slate-300 mb-1">{{ t('maxDiscountAmt') }}</label>
+                            <input v-model.number="config.max_discount_amount" type="number" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" min="0">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-600 dark:text-slate-300 mb-1">{{ t('maxBargainRounds') }}</label>
+                        <input v-model.number="config.max_bargain_rounds" type="number" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" min="1" max="20">
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{{ t('bargainRoundsTip') }}</p>
+                    </div>
+                </div>
+                
+                <div class="pt-2 flex gap-2">
+                    <button @click="saveConfig" class="flex-1 bg-blue-600 text-white font-medium py-2.5 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm flex items-center justify-center gap-1.5">
+                        <span>💾</span> {{ t('saveConfigBtn') }}
+                    </button>
+                    <button @click="resetConfig" class="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2.5 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-sm" title="Reset">
+                        🔄
+                    </button>
+                </div>
+
+                <!-- NodeHK VPN 推荐卡片 -->
+                <div class="mt-4 p-3.5 bg-gradient-to-r from-indigo-50/90 to-blue-50/90 dark:from-slate-800 dark:to-indigo-950/60 rounded-xl border border-indigo-200/80 dark:border-indigo-800/60 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-[10px] font-bold uppercase tracking-wider bg-indigo-100 dark:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full shrink-0">
+                            ⚡ {{ t('vpnAdBadge') }}
+                        </span>
+                        <span class="text-[10px] text-indigo-600/80 dark:text-indigo-400 font-mono font-medium">www.nodehk.shop</span>
+                    </div>
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <span>🚀</span> {{ t('vpnAdTitle') }}
+                        </h4>
+                        <p class="text-[11px] text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                            {{ t('vpnAdDesc') }}
+                        </p>
+                    </div>
+                    <div class="pt-1">
+                        <a href="https://www.nodehk.shop/" target="_blank" rel="noopener noreferrer" 
+                           class="w-full bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white text-xs font-semibold py-2 px-3 rounded-lg transition-all shadow-xs flex items-center justify-center gap-1.5 group">
+                            <span>🌐 {{ t('vpnAdBtn') }}</span>
+                            <span class="group-hover:translate-x-0.5 transition-transform">→</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: 意图匹配关键词设置 -->
+            <div v-show="currentTab === 'intent'" class="flex-1 overflow-y-auto p-4 space-y-4 pb-16 sm:pb-8">
+                <div class="bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl p-3 text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                    <span class="font-bold">💡 {{ t('intentExplainTitle') }}:</span>
+                    {{ t('intentExplainBody') }}
+                </div>
+
+                <!-- 议价意图 -->
+                <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-amber-200 dark:border-amber-800/60 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                            <span>💰</span> {{ t('intentPriceLabel') }} (price)
+                        </label>
+                        <span class="text-[10px] bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-full font-mono">{{ t('priorityHigh') }}</span>
+                    </div>
+                    <textarea v-model="config.price_keywords" rows="3" class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-amber-500" :placeholder="t('priceKwPlaceholder')"></textarea>
+                </div>
+
+                <!-- 细节/技术咨询意图 -->
+                <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-emerald-200 dark:border-emerald-800/60 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                            <span>🔧</span> {{ t('intentTechLabel') }} (tech)
+                        </label>
+                        <span class="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full font-mono">{{ t('priorityMed') }}</span>
+                    </div>
+                    <textarea v-model="config.tech_keywords" rows="3" class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-emerald-500" :placeholder="t('techKwPlaceholder')"></textarea>
+                </div>
+
+                <!-- 通用意图 -->
+                <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                            <span>💬</span> {{ t('intentDefaultLabel') }} (default)
+                        </label>
+                        <span class="text-[10px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full font-mono">{{ t('priorityFallback') }}</span>
+                    </div>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-700 p-2.5 rounded-lg border border-slate-200 dark:border-slate-600">
+                        {{ t('defaultIntentTip') }}
+                    </p>
+                </div>
+
+                <button @click="saveConfig" class="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm flex items-center justify-center gap-1.5">
+                    <span>💾</span> {{ t('saveKeywordsBtn') }}
+                </button>
+            </div>
+            
+            <!-- Tab 1: 商品管理面板 (已挪到第1位) -->
+            <div v-show="currentTab === 'product'" class="flex-1 overflow-y-auto p-3.5 sm:p-4 flex flex-col space-y-3.5 pb-16 sm:pb-8">
+                <!-- 头部与添加按钮 -->
+                <div class="flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="text-xs font-bold text-slate-700 dark:text-slate-200 truncate">{{ t('productListTitle') }}</span>
+                        <span class="bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
+                            {{ filteredProducts.length }} / {{ products.length }}
+                        </span>
+                    </div>
+                    <button @click="addProduct" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors shadow-sm flex items-center gap-1 shrink-0">
+                        <span>➕</span> <span>{{ t('addProductBtn') }}</span>
+                    </button>
+                </div>
+
+                <!-- 商品搜索框 -->
+                <div class="relative shrink-0">
+                    <input v-model="productSearchQuery" type="text" 
+                           class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 text-xs rounded-xl pl-8 pr-8 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all placeholder:text-slate-400"
+                           :placeholder="t('searchProductPlaceholder')">
+                    <span class="absolute left-2.5 top-2.5 text-slate-400 text-xs pointer-events-none">🔍</span>
+                    <button v-if="productSearchQuery" @click="productSearchQuery = ''" class="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs p-0.5">
+                        ✕
+                    </button>
+                </div>
+
+                <!-- 商品列表 -->
+                <div class="space-y-2.5 flex-1 pr-0.5">
+                    <div v-if="filteredProducts.length === 0" class="text-center py-8 text-slate-400 dark:text-slate-400 text-xs space-y-1 bg-slate-50/50 dark:bg-slate-700/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
+                        <div class="text-xl">🔍</div>
+                        <div>{{ t('searchProductNoResult') }}</div>
+                    </div>
+
+                    <div v-for="product in filteredProducts" :key="product.id" class="space-y-2">
+                        <!-- 商品卡片条块 -->
+                        <div @click="selectProduct(product.id)"
+                             :class="['group p-3 rounded-xl cursor-pointer border transition-all flex items-center justify-between gap-2.5 relative', 
+                                      String(selectedProductId) === String(product.id) ? 'bg-blue-50/90 dark:bg-blue-950/60 border-blue-500 shadow-sm ring-2 ring-blue-100 dark:ring-blue-900' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600']">
+                            
+                            <!-- 左侧商品简要信息 -->
+                            <div class="flex-1 min-w-0">
+                                <div class="font-semibold text-slate-800 dark:text-slate-100 text-xs sm:text-sm truncate flex items-center gap-1.5">
+                                    <span v-if="String(selectedProductId) === String(product.id)" class="bg-blue-600 text-white text-[9px] px-1.5 py-0.2 rounded font-medium shrink-0">{{ t('activeTestTag') }}</span>
+                                    <span class="truncate">{{ product.title || t('unnamedProduct') }}</span>
+                                </div>
+                                <div class="text-xs text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap items-center gap-2">
+                                    <span class="text-emerald-600 dark:text-emerald-400 font-bold">¥{{ product.price !== undefined ? product.price : '0' }}</span>
+                                    <span v-if="product.ai_prompt" class="inline-block px-1.5 py-0.2 bg-purple-50 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 rounded text-[10px] border border-purple-200 dark:border-purple-800 truncate max-w-[120px]">{{ t('hasExtraPrompt') }}</span>
+                                </div>
+                            </div>
+
+                            <!-- 右侧操作与编辑按钮 -->
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button @click.stop="toggleEditProduct(product.id)" 
+                                        :class="['px-2.5 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 border shadow-xs', 
+                                                 editingProductId === product.id 
+                                                 ? 'bg-blue-600 text-white border-blue-600' 
+                                                 : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 border-slate-200 dark:border-slate-600']">
+                                    <span>✏️</span>
+                                    <span>{{ editingProductId === product.id ? t('closeEdit') : t('editBtn') }}</span>
+                                </button>
+                                <button @click.stop="duplicateProduct(product.id)" 
+                                        :title="t('duplicateTooltip')" 
+                                        class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-100/80 dark:hover:bg-blue-900/50 rounded-lg transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                </button>
+                                <button @click.stop="deleteProduct(product.id)" 
+                                        :title="t('deleteTooltip')" 
+                                        class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100/80 dark:hover:bg-red-900/50 rounded-lg transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 点击“编辑”按钮展开的商品编辑面板 -->
+                        <transition enter-active-class="transition duration-200 ease-out" enter-from-class="transform scale-95 opacity-0" enter-to-class="transform scale-100 opacity-100" leave-active-class="transition duration-150 ease-in" leave-from-class="transform scale-100 opacity-100" leave-to-class="transform scale-95 opacity-0">
+                            <div v-if="editingProductId === product.id" class="p-3.5 bg-slate-50 dark:bg-slate-800 rounded-xl border border-blue-200 dark:border-blue-800/80 shadow-md space-y-3 ml-1 sm:ml-2 border-l-4 border-l-blue-500">
+                                <div class="flex justify-between items-center pb-1 border-b dark:border-slate-700">
+                                    <h4 class="font-bold text-xs text-blue-700 dark:text-blue-300 flex items-center gap-1">
+                                        <span>✏️</span> {{ t('editProductTitle') }}
+                                    </h4>
+                                    <button @click="editingProductId = null" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 px-1.5 py-0.5 rounded">
+                                        ✕ {{ t('closeEdit') }}
+                                    </button>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{{ t('productTitleLabel') }}</label>
+                                    <input v-model="product.title" @change="saveToStorage" type="text" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{{ t('productPriceLabel') }}</label>
+                                    <input v-model.number="product.price" @change="saveToStorage" type="number" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500" step="0.01">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{{ t('productDescLabel') }}</label>
+                                    <textarea v-model="product.desc" @change="saveToStorage" rows="3" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500"></textarea>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-xs font-bold text-purple-700 dark:text-purple-400 mb-1">{{ t('productAIPromptLabel') }}</label>
+                                    <textarea v-model="product.ai_prompt" @change="saveToStorage" rows="2" class="w-full bg-white dark:bg-slate-700 border border-purple-200 dark:border-purple-800 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-purple-500" placeholder="针对该商品的特别指示，如不准少于某价格、赠品提示等..."></textarea>
+                                </div>
+                                
+                                <div class="flex gap-2 pt-1">
+                                    <button @click="updateProduct" class="flex-1 bg-blue-600 text-white font-medium py-1.5 rounded-lg hover:bg-blue-700 transition-colors text-xs flex items-center justify-center gap-1">
+                                        💾 {{ t('saveProductBtn') }}
+                                    </button>
+                                    <button @click="editingProductId = null" class="px-3 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-medium py-1.5 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-xs">
+                                        {{ t('closeEdit') }}
+                                    </button>
+                                </div>
+                            </div>
+                        </transition>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Tab 4: 提示词多版本编辑与团队协作面板 -->
+            <div v-show="currentTab === 'prompt'" class="flex-1 overflow-y-auto p-4 space-y-4 pb-16 sm:pb-8">
+                <div class="bg-purple-50/80 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/60 p-3.5 rounded-xl space-y-3">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs font-bold text-purple-900 dark:text-purple-300 flex items-center gap-1.5">
+                            <span>📌</span> {{ t('activePromptVer') }}
+                        </label>
+                        <span class="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-medium">
+                            {{ t('activeBadge') }}
+                        </span>
+                    </div>
+
+                    <!-- 使 select 元素能够自适应截断，防止新建按钮在小屏或窄边栏被挤出卡片 -->
+                    <div class="flex items-center gap-2 min-w-0 w-full">
+                        <div class="flex-1 min-w-0">
+                            <select v-model="activePromptVersionId" @change="onPromptVersionChange" 
+                                    class="w-full bg-white dark:bg-slate-700 border border-purple-300 dark:border-purple-700 rounded-lg px-2.5 py-2 text-xs font-semibold text-purple-900 dark:text-purple-200 focus:ring-2 focus:ring-purple-500 truncate">
+                                <option v-for="ver in promptVersions" :key="ver.id" :value="ver.id">
+                                    {{ ver.name }} ({{ t('designer') }}: {{ ver.author || 'Anonymous' }})
+                                </option>
+                            </select>
+                        </div>
+                        <button @click="openCreateVersionModal" class="bg-purple-600 text-white px-3 py-2 rounded-lg text-xs font-medium hover:bg-purple-700 transition-colors shrink-0 flex items-center justify-center gap-1 min-w-[64px]">
+                            ➕ {{ t('newVerBtn') }}
+                        </button>
+                    </div>
+
+                    <div v-if="activePromptVersion" class="grid grid-cols-2 gap-2 text-[11px] bg-white dark:bg-slate-800 p-2.5 rounded-lg border border-purple-100 dark:border-purple-800">
+                        <div>
+                            <span class="text-slate-400">{{ t('verName') }}:</span> 
+                            <input v-model="activePromptVersion.name" @change="savePromptVersions" type="text" class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 text-xs font-medium text-slate-800 dark:text-slate-100">
+                        </div>
+                        <div>
+                            <span class="text-slate-400">{{ t('designerName') }}:</span> 
+                            <input v-model="activePromptVersion.author" @change="savePromptVersions" type="text" class="w-full bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 text-xs text-slate-800 dark:text-slate-100">
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-1.5 pt-1 text-xs">
+                        <div class="flex items-center gap-1.5">
+                            <button @click="duplicateCurrentVersion" class="px-2.5 py-1 bg-white dark:bg-slate-800 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-100/80 rounded-md font-medium text-[11px] transition-colors">
+                                📋 {{ t('copyNewVer') }}
+                            </button>
+                            <button @click="openExportModal" class="px-2.5 py-1 bg-white dark:bg-slate-800 border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-100/80 rounded-md font-medium text-[11px] transition-colors">
+                                📤 {{ t('importExportJson') }}
+                            </button>
+                        </div>
+                        <button @click="deleteCurrentVersion" :disabled="promptVersions.length <= 1" class="px-2 py-1 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-md text-[11px] disabled:opacity-40">
+                            🗑️ {{ t('deleteVer') }}
+                        </button>
+                    </div>
+                </div>
+
+                <div v-if="activePromptVersion" class="space-y-3">
+                    <div class="flex items-center justify-between">
+                        <div class="flex bg-slate-100 dark:bg-slate-700 p-0.5 rounded-lg text-xs">
+                            <button @click="promptEditMode = 'visual'" :class="['px-3 py-1 rounded-md transition-colors font-medium', promptEditMode === 'visual' ? 'bg-white dark:bg-slate-600 text-purple-700 dark:text-purple-300 shadow-sm' : 'text-slate-500 dark:text-slate-400']">
+                                🧩 {{ t('editModeVisual') }}
+                            </button>
+                            <button @click="promptEditMode = 'json'" :class="['px-3 py-1 rounded-md transition-colors font-medium', promptEditMode === 'json' ? 'bg-white dark:bg-slate-600 text-purple-700 dark:text-purple-300 shadow-sm' : 'text-slate-500 dark:text-slate-400']">
+                                💻 {{ t('editModeJson') }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div v-if="promptEditMode === 'visual'" class="space-y-3.5">
+                        <div class="bg-amber-50/50 dark:bg-amber-950/20 p-3 rounded-xl border border-amber-200/80 dark:border-amber-800/50 space-y-1.5">
+                            <label class="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                                💰 {{ t('promptPriceLabel') }} (price)
+                            </label>
+                            <textarea v-model="activePromptVersion.prompts.price" @input="savePromptVersions" rows="5" class="w-full bg-white dark:bg-slate-700 border border-amber-300 dark:border-amber-700 rounded-lg p-2.5 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-amber-500"></textarea>
+                        </div>
+
+                        <div class="bg-emerald-50/50 dark:bg-emerald-950/20 p-3 rounded-xl border border-emerald-200/80 dark:border-emerald-800/50 space-y-1.5">
+                            <label class="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                                🔧 {{ t('promptTechLabel') }} (tech)
+                            </label>
+                            <textarea v-model="activePromptVersion.prompts.tech" @input="savePromptVersions" rows="5" class="w-full bg-white dark:bg-slate-700 border border-emerald-300 dark:border-emerald-700 rounded-lg p-2.5 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-emerald-500"></textarea>
+                        </div>
+
+                        <div class="bg-slate-50 dark:bg-slate-700/50 p-3 rounded-xl border border-slate-200 dark:border-slate-600 space-y-1.5">
+                            <label class="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                                💬 {{ t('promptDefaultLabel') }} (default)
+                            </label>
+                            <textarea v-model="activePromptVersion.prompts.default" @input="savePromptVersions" rows="4" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg p-2.5 text-xs text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500"></textarea>
+                        </div>
+                    </div>
+
+                    <div v-else class="space-y-2">
+                        <textarea v-model="activePromptVersionJson" @input="updateVersionFromJson" rows="16" class="w-full bg-slate-800 text-emerald-300 border border-slate-600 rounded-xl p-3 font-mono text-xs focus:ring-2 focus:ring-purple-500"></textarea>
+                    </div>
+
+                    <button @click="savePromptVersions(true)" class="w-full bg-purple-600 text-white font-medium py-2.5 rounded-lg hover:bg-purple-700 transition-colors shadow-sm text-sm flex items-center justify-center gap-1">
+                        <span>💾</span> {{ t('saveApplyVerBtn') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 右侧主对话与响应测试区域 -->
+        <div :class="['flex-1 flex flex-col bg-slate-50/70 dark:bg-slate-800/90 h-full overflow-hidden transition-all', activeMobileView === 'chat' ? 'flex' : 'hidden md:flex']">
+            
+            <div v-if="selectedProduct" class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-3 md:p-3.5 shadow-sm shrink-0 flex items-center justify-between gap-2.5">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-1.5">
+                            <span class="bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300 text-[10px] md:text-xs px-1.5 md:px-2 py-0.5 rounded font-bold shrink-0">{{ t('testProductTag') }}</span>
+                            <h2 class="text-xs sm:text-sm md:text-base font-bold text-slate-800 dark:text-slate-100 truncate">{{ selectedProduct.title }}</h2>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 sm:gap-3 mt-1 text-[11px] sm:text-xs text-slate-600 dark:text-slate-300">
+                            <span class="font-semibold text-emerald-600 dark:text-emerald-400">💰 ¥{{ selectedProduct.price }}</span>
+                            <span class="bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600">
+                                📊 {{ t('bargainProgress') }}: <b class="text-blue-600 dark:text-blue-400">{{ chatSessions[selectedProductId]?.bargainCount || 0 }}</b> / {{ config.max_bargain_rounds }}
+                            </span>
+                            <span class="hidden sm:inline-block bg-purple-50 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-700 font-medium truncate max-w-[120px]">
+                                📝 {{ activePromptVersion?.name || 'Default' }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button @click="resetBargainCount" class="text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1" :title="t('resetRoundsBtn')">
+                        <span>🔄</span> <span class="hidden sm:inline">{{ t('resetRoundsBtn') }}</span>
+                    </button>
+                    <button @click="clearChatSession" class="text-xs bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1" :title="t('clearChatBtn')">
+                        <span>🗑️</span> <span class="hidden sm:inline">{{ t('clearChatBtn') }}</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div v-else class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-3.5 shrink-0 flex items-center justify-between gap-2 text-slate-500 dark:text-slate-300 text-xs">
+                <span>👈 {{ t('selectProductGuide') }}</span>
+            </div>
+            
+            <!-- 聊天消息展示区域 -->
+            <div class="flex-1 overflow-hidden relative">
+                <div v-if="selectedProduct" class="chat-container h-full">
+                    <div ref="messagesContainer" class="chat-messages flex flex-col space-y-3">
+                        
+                        <div class="self-center bg-blue-50/80 dark:bg-blue-900/40 border border-blue-100 dark:border-blue-800 text-blue-800 dark:text-blue-200 text-xs px-3 py-2 rounded-xl my-1 text-center max-w-md">
+                            💡 {{ t('chatGuideText') }}《{{ activePromptVersion?.name || 'Default' }}》
+                        </div>
+
+                        <div v-for="(msg, idx) in currentSessionMessages" :key="idx"
+                             :class="['message flex flex-col', msg.role === 'user' ? 'message user' : 'message assistant']">
+                            <div class="flex items-center gap-1.5 text-[10px] opacity-75 mb-1">
+                                <span class="font-bold">{{ msg.role === 'user' ? t('buyerRole') : t('assistantRole') }}</span>
+                                <span v-if="msg.intent" class="px-1.5 py-0.2 rounded font-normal"
+                                      :class="{
+                                          'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300': msg.intent === 'price',
+                                          'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300': msg.intent === 'tech',
+                                          'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200': msg.intent === 'default'
+                                      }">
+                                    {{ msg.intent === 'price' ? '💰 ' + t('intentPriceLabel') : (msg.intent === 'tech' ? '🔧 ' + t('intentTechLabel') : '💬 ' + t('intentDefaultLabel')) }}
+                                </span>
+                                <span v-if="msg.promptVersionName" class="px-1.5 py-0.2 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300 truncate max-w-[100px]">
+                                    {{ msg.promptVersionName }}
+                                </span>
+                                <span class="ml-auto opacity-60">{{ msg.timestamp || '' }}</span>
+                            </div>
+                            <div class="text-xs sm:text-sm whitespace-pre-wrap leading-relaxed">{{ msg.content }}</div>
+                        </div>
+
+                        <div v-if="isLoading" class="message assistant">
+                            <div class="flex items-center gap-2 py-1">
+                                <div class="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
+                                <div class="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style="animation-delay: 0.15s"></div>
+                                <div class="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style="animation-delay: 0.3s"></div>
+                                <span class="text-xs text-slate-500 dark:text-slate-300 font-medium ml-1">{{ t('aiThinking') }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 快捷买家消息词包 -->
+                    <div v-if="selectedProduct" class="px-3 py-2 bg-slate-100/90 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center gap-2 overflow-x-auto no-scrollbar text-xs shrink-0">
+                        <span class="text-slate-400 shrink-0 text-[11px] font-medium hidden sm:inline">{{ t('quickPhrases') }}:</span>
+                        <button v-for="quick in localizedQuickMessages" :key="quick.label" @click="sendQuickMessage(quick.text)" 
+                                class="bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:border-blue-500 hover:text-blue-600 px-3 py-1.5 rounded-full text-xs shrink-0 transition-all shadow-sm active:scale-95">
+                            {{ quick.label }}
+                        </button>
+                    </div>
+
+                    <!-- 聊天输入框 -->
+                    <div class="chat-input bg-white dark:bg-slate-800 shrink-0 border-t border-slate-200 dark:border-slate-700">
+                        <div class="flex gap-2">
+                            <input v-model="inputMessage" @keyup.enter="sendMessage" type="text" 
+                                   class="flex-1 min-h-[42px] bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-xl px-3.5 py-2 text-xs sm:text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                                   :placeholder="t('inputPlaceholder')" :disabled="!selectedProduct || isLoading">
+                            <button @click="sendMessage" :disabled="!selectedProduct || !inputMessage.trim() || isLoading"
+                                    class="min-h-[42px] bg-blue-600 text-white font-medium px-4 sm:px-6 py-2 rounded-xl hover:bg-blue-700 active:scale-95 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed transition-all shadow-sm flex items-center gap-1.5 shrink-0 text-xs sm:text-sm">
+                                <span>{{ t('sendBtn') }}</span>
+                                <span>✈️</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-else class="h-full flex items-center justify-center text-slate-400">
+                    <div class="text-center">
+                        <div class="text-5xl mb-3">💬</div>
+                        <p class="text-sm">{{ t('selectProductGuide') }}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 调试信息面板 -->
+            <div v-if="debugInfo" class="border-t border-slate-200 dark:border-slate-800 bg-slate-900 text-slate-100 shrink-0 max-h-56 flex flex-col overflow-hidden">
+                <div class="px-3 py-2 bg-slate-800 border-b border-slate-700 flex items-center justify-between text-xs">
+                    <div class="flex items-center gap-2">
+                        <span class="font-bold text-blue-400">🔍 {{ t('debugTitle') }}</span>
+                        <span class="text-purple-300 font-medium">{{ debugInfo.promptVersionName || 'Default' }}</span>
+                        <span class="text-slate-400 font-mono">⏱️ {{ debugInfo.duration }}ms</span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold" 
+                              :class="{
+                                  'bg-amber-900 text-amber-200': debugInfo.intent === 'price',
+                                  'bg-emerald-900 text-emerald-200': debugInfo.intent === 'tech',
+                                  'bg-slate-700 text-slate-200': debugInfo.intent === 'default'
+                              }">
+                            {{ debugInfo.intent }}
+                        </span>
+                    </div>
+                    <button @click="clearDebug" class="text-slate-400 hover:text-white text-xs">✕</button>
+                </div>
+                <div class="p-3 debug-panel overflow-y-auto space-y-2 text-xs">
+                    <div>
+                        <div class="font-bold text-slate-400 mb-0.5">⚙️ System Prompt:</div>
+                        <pre class="bg-slate-950 text-emerald-300 p-2 rounded border border-slate-800 text-[11px]">{{ debugInfo.systemPrompt }}</pre>
+                    </div>
+                    <div>
+                        <div class="font-bold text-slate-400 mb-0.5">👤 Context & User Prompt:</div>
+                        <pre class="bg-slate-950 text-blue-300 p-2 rounded border border-slate-800 text-[11px]">{{ debugInfo.userPrompt }}</pre>
+                    </div>
+                    <div>
+                        <div class="font-bold text-slate-400 mb-0.5">🤖 AI Raw Response:</div>
+                        <pre class="bg-slate-950 text-amber-300 p-2 rounded border border-slate-800 text-[11px]">{{ debugInfo.rawResponse }}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+        
+        const i18nDictionary = {
+            zh: {
+                appTitle: '通用 AI 客服评估测试平台',
+                appSubtitle: '1:1 模拟生产环境 AI 意图分类与回复逻辑',
+                lightMode: '亮色模式',
+                darkMode: '暗黑模式',
+                themeTooltip: '切换亮色/暗黑界面主题',
+                langTooltip: 'Switch Language / 切换语言',
+                navConfig: '配置与商品',
+                navChat: '对话测试',
+                tabApi: 'API & 策略',
+                tabIntent: '意图关键词',
+                tabProducts: '商品管理',
+                tabPrompts: '提示词版本',
+                apiSettingTitle: 'API 模型服务商设置',
+                providerType: '服务商类型',
+                bargainStrategyTitle: '议价策略全局控制',
+                maxDiscountPct: '最大优惠比例 (%)',
+                maxDiscountAmt: '最大优惠金额 (元)',
+                maxBargainRounds: '买家议价最大允许轮数',
+                bargainRoundsTip: '超过最大轮数后，AI 将自动触发拒绝继续降价的提示语。',
+                saveConfigBtn: '保存 API & 策略配置',
+                intentExplainTitle: '意图匹配说明',
+                intentExplainBody: '测试平台按顺序检测买家消息中的关键词：首先匹配议价意图，其次匹配细节/技术意图，若均未命中则自动归类为通用/默认意图。',
+                intentPriceLabel: '议价意图关键词',
+                intentTechLabel: '细节/技术咨询关键词',
+                intentDefaultLabel: '通用/默认意图',
+                priorityHigh: '最高优先级',
+                priorityMed: '次高优先级',
+                priorityFallback: '默认兜底',
+                priceKwPlaceholder: '多个关键词用逗号或换行分隔，如：便宜, 优惠, 刀, 降价, 多少钱, 最低...',
+                techKwPlaceholder: '多个关键词用逗号或换行分隔，如：怎么用, 参数, 坏了, 故障, 设置, 说明书...',
+                defaultIntentTip: '未包含议价或细节关键词的消息（如：在吗、快递包邮吗、什么时候发货等），系统将自动归类为通用意图。',
+                saveKeywordsBtn: '保存意图关键词配置',
+                productListTitle: '商品列表 (点击切换测试)',
+                addProductBtn: '添加商品',
+                searchProductPlaceholder: '搜索商品名称、描述或价格...',
+                searchProductNoResult: '未找到符合条件的商品',
+                editBtn: '编辑',
+                closeEdit: '收起',
+                activeTestTag: '测试中',
+                unnamedProduct: '未命名商品',
+                hasExtraPrompt: '有附加提示词',
+                duplicateTooltip: '复制此商品',
+                deleteTooltip: '删除此商品',
+                editProductTitle: '编辑商品属性',
+                productTitleLabel: '商品标题',
+                productPriceLabel: '商品标价 (元)',
+                productDescLabel: '商品详情描述',
+                productAIPromptLabel: '商品附加提示词',
+                saveProductBtn: '保存更新',
+                copy: '复制',
+                delete: '删除',
+                cancel: '取消',
+                confirm: '确认',
+                activePromptVer: '当前激活的提示词版本',
+                activeBadge: '测试生效中',
+                designer: '设计者',
+                newVerBtn: '新建',
+                verName: '版本名称',
+                designerName: '设计者/团队成员',
+                copyNewVer: '复制为新版本',
+                importExportJson: '导入/导出 JSON',
+                deleteVer: '删除版本',
+                editModeVisual: '三意图分块编辑',
+                editModeJson: '原始 JSON 编辑',
+                promptPriceLabel: '议价意图 Prompt',
+                promptTechLabel: '细节/技术咨询 Prompt',
+                promptDefaultLabel: '通用/默认客服 Prompt',
+                saveApplyVerBtn: '保存并应用当前提示词版本',
+                testProductTag: '测试商品',
+                priceTag: '标价',
+                bargainProgress: '议价进度',
+                verTag: '提示词版本',
+                resetRoundsBtn: '重置轮次',
+                clearChatBtn: '清空记录',
+                selectProductGuide: '请在左侧选择或创建一个商品开始测试',
+                chatGuideText: '输入买家问题测试 AI 回复，系统将根据设定的意图关键词与选定提示词版本',
+                buyerRole: '买家 (User)',
+                assistantRole: 'AI 客服 (Assistant)',
+                aiThinking: 'AI 思考与生成回复中...',
+                quickPhrases: '快捷买家输入',
+                inputPlaceholder: '输入买家消息测试 AI 回复...',
+                sendBtn: '发送',
+                debugTitle: '调试日志与 Prompt',
+                importExportTitle: '提示词版本 JSON 导入 / 导出',
+                jsonLabel: '提示词版本数据 (JSON 格式)',
+                copyClipboard: '复制 JSON 到剪贴板',
+                importSaveNew: '导入并另存为新版本',
+                vpnAdBadge: '推荐加速服务',
+                vpnAdTitle: 'NodeHK VPN - 极速稳定网络加速',
+                vpnAdDesc: '专为 AI 开发者与大模型 API 访问优化，支持 OpenAI、Gemini、Claude 高速稳定连接。',
+                vpnAdBtn: '访问 NodeHK VPN (www.nodehk.shop)'
+            },
+            en: {
+                appTitle: 'Universal AI Customer Service Eval Platform',
+                appSubtitle: '1:1 Simulation of AI Intent Classification & Auto-Reply Logic',
+                lightMode: 'Light Mode',
+                darkMode: 'Dark Mode',
+                themeTooltip: 'Toggle Light / Dark Slate Theme',
+                langTooltip: 'Switch Language / 切换语言',
+                navConfig: 'Config & Products',
+                navChat: 'Chat Evaluation',
+                tabApi: 'API & Strategy',
+                tabIntent: 'Intent Keywords',
+                tabProducts: 'Products',
+                tabPrompts: 'Prompt Versions',
+                apiSettingTitle: 'API Model Provider Settings',
+                providerType: 'Provider Type',
+                bargainStrategyTitle: 'Bargaining Strategy Control',
+                maxDiscountPct: 'Max Discount (%)',
+                maxDiscountAmt: 'Max Discount Amount ($)',
+                maxBargainRounds: 'Max Bargaining Rounds',
+                bargainRoundsTip: 'After exceeding max rounds, AI automatically triggers discount refusal responses.',
+                saveConfigBtn: 'Save API & Strategy Config',
+                intentExplainTitle: 'Intent Matching Guide',
+                intentExplainBody: 'The evaluator checks buyer messages sequentially: Price intent first, Tech/Details intent second, defaulting to General intent if neither matches.',
+                intentPriceLabel: 'Price Intent Keywords',
+                intentTechLabel: 'Tech / Details Keywords',
+                intentDefaultLabel: 'General / Default Intent',
+                priorityHigh: 'Top Priority',
+                priorityMed: 'Medium Priority',
+                priorityFallback: 'Default Fallback',
+                priceKwPlaceholder: 'Comma or newline separated keywords e.g., cheap, discount, lower price, best price...',
+                techKwPlaceholder: 'Comma or newline separated keywords e.g., how to use, specs, broken, manual, parameters...',
+                defaultIntentTip: 'Messages without price or tech keywords (e.g. hello, shipping, availability) trigger general customer service response.',
+                saveKeywordsBtn: 'Save Intent Keywords',
+                productListTitle: 'Product List (Click to test)',
+                addProductBtn: 'Add Product',
+                searchProductPlaceholder: 'Search products by title, desc or price...',
+                searchProductNoResult: 'No matching products found',
+                editBtn: 'Edit',
+                closeEdit: 'Close',
+                activeTestTag: 'Testing',
+                unnamedProduct: 'Unnamed Product',
+                hasExtraPrompt: 'Has Extra Prompt',
+                duplicateTooltip: 'Duplicate Product',
+                deleteTooltip: 'Delete Product',
+                editProductTitle: 'Edit Product Details',
+                productTitleLabel: 'Product Title',
+                productPriceLabel: 'Listed Price ($)',
+                productDescLabel: 'Product Description',
+                productAIPromptLabel: 'Product AI Prompt',
+                saveProductBtn: 'Save Changes',
+                copy: 'Copy',
+                delete: 'Delete',
+                cancel: 'Cancel',
+                confirm: 'Confirm',
+                activePromptVer: 'Active Prompt Version',
+                activeBadge: 'Currently In Use',
+                designer: 'Designer',
+                newVerBtn: 'New',
+                verName: 'Version Name',
+                designerName: 'Designer / Contributor',
+                copyNewVer: 'Duplicate as New Version',
+                importExportJson: 'Import / Export JSON',
+                deleteVer: 'Delete Version',
+                editModeVisual: 'Visual Block Editor',
+                editModeJson: 'Raw JSON Editor',
+                promptPriceLabel: 'Bargain Intent Prompt',
+                promptTechLabel: 'Tech / Details Prompt',
+                promptDefaultLabel: 'General Support Prompt',
+                saveApplyVerBtn: 'Save & Apply Prompt Version',
+                testProductTag: 'Testing Product',
+                priceTag: 'Price',
+                bargainProgress: 'Bargain Progress',
+                verTag: 'Prompt Version',
+                resetRoundsBtn: 'Reset Rounds',
+                clearChatBtn: 'Clear Chat',
+                selectProductGuide: 'Select or create a product on the left to start evaluation',
+                chatGuideText: 'Send buyer questions to test AI responses against active intent rules and prompt version ',
+                buyerRole: 'Buyer (User)',
+                assistantRole: 'AI Agent (Assistant)',
+                aiThinking: 'AI thinking & generating response...',
+                quickPhrases: 'Quick Buyer Inputs',
+                inputPlaceholder: 'Type buyer question to test AI response...',
+                sendBtn: 'Send',
+                debugTitle: 'Debug Log & Context Prompt',
+                importExportTitle: 'Prompt Version JSON Import / Export',
+                jsonLabel: 'Prompt Version Data (JSON)',
+                copyClipboard: 'Copy JSON to Clipboard',
+                importSaveNew: 'Import & Save as New Version',
+                vpnAdBadge: 'Recommended Proxy',
+                vpnAdTitle: 'NodeHK VPN - High-Speed Stable Proxy',
+                vpnAdDesc: 'Optimized for AI developers & LLM API connections (OpenAI, Gemini, Claude).',
+                vpnAdBtn: 'Visit NodeHK VPN (www.nodehk.shop)'
+            }
+        };
+
+        createApp({
+            data() {
+                return {
+                    isDarkMode: localStorage.getItem('theme') === 'dark',
+                    currentLang: localStorage.getItem('lang') || 'zh',
+                    currentTab: 'product',
+                    activeMobileView: 'chat',
+                    productSearchQuery: '',
+                    editingProductId: null,
+                    toast: { show: false, message: '', type: 'info' },
+                    toastTimeout: null,
+                    
+                    confirmModal: {
+                        show: false,
+                        title: '',
+                        message: '',
+                        confirmText: '',
+                        cancelText: '',
+                        danger: true,
+                        onConfirm: null
+                    },
+
+                    importExportModal: {
+                        show: false,
+                        jsonText: ''
+                    },
+
+                    config: {
+                        provider_type: 'openai_compatible',
+                        base_url: 'https://api.openai.com/v1',
+                        api_key: '',
+                        model_name: 'qwen-plus',
+                        max_discount_percent: 10,
+                        max_discount_amount: 100,
+                        max_bargain_rounds: 3,
+                        price_keywords: '便宜, 优惠, 刀, 降价, 价格, 多少钱, 能少, 还能, 最低, 底价, 实诚价, 到100, 能到, 包个邮, 少点, 便宜点',
+                        tech_keywords: '怎么用, 参数, 坏了, 故障, 设置, 说明书, 功能, 用法, 教程, 驱动, 尺码, 新旧, 正品, 拆过, 修过',
+                        default_keywords: '在吗, 还在吗, 快递, 包邮, 发货, 什么时候发, 拍下'
+                    },
+
+                    promptVersions: [],
+                    activePromptVersionId: 'v1',
+                    promptEditMode: 'visual',
+                    activePromptVersionJson: '',
+
+                    products: [],
+                    selectedProductId: null,
+                    chatSessions: {},
+                    inputMessage: '',
+                    isLoading: false,
+                    debugInfo: null,
+                    quickMessagesZh: [
+                        { label: '询问优惠', text: '你好，这款价格能便宜点吗？最低多少钱卖？' },
+                        { label: '询问细节', text: '老板，这个商品参数怎么样？拆过修过吗？' },
+                        { label: '大额砍价', text: '诚心想要，再少200块钱行不行？直接拍了！' },
+                        { label: '询问发货', text: '有现货吗？今天拍下什么时候可以发货？' }
+                    ],
+                    quickMessagesEn: [
+                        { label: 'Ask Discount', text: 'Hi, can you give me a lower price? What is your best price?' },
+                        { label: 'Ask Details', text: 'Hi, what are the exact specifications and item condition?' },
+                        { label: 'Big Offer', text: 'I am ready to pay right now, can you cut $50 off?' },
+                        { label: 'Ask Shipping', text: 'Is this in stock? When will you ship if I order now?' }
+                    ]
+                };
+            },
+            computed: {
+                selectedProduct() {
+                    return this.products.find(p => String(p.id) === String(this.selectedProductId));
+                },
+                filteredProducts() {
+                    if (!this.productSearchQuery || !this.productSearchQuery.trim()) {
+                        return this.products;
+                    }
+                    const q = this.productSearchQuery.trim().toLowerCase();
+                    return this.products.filter(p => 
+                        (p.title && p.title.toLowerCase().includes(q)) || 
+                        (p.desc && p.desc.toLowerCase().includes(q)) ||
+                        (p.price !== undefined && String(p.price).toLowerCase().includes(q))
+                    );
+                },
+                currentSessionMessages() {
+                    if (!this.selectedProductId || !this.chatSessions[this.selectedProductId]) {
+                        return [];
+                    }
+                    return this.chatSessions[this.selectedProductId].messages || [];
+                },
+                activePromptVersion() {
+                    return this.promptVersions.find(v => String(v.id) === String(this.activePromptVersionId)) || this.promptVersions[0];
+                },
+                localizedQuickMessages() {
+                    return this.currentLang === 'en' ? this.quickMessagesEn : this.quickMessagesZh;
+                }
+            },
+            methods: {
+                t(key) {
+                    const dict = i18nDictionary[this.currentLang] || i18nDictionary.zh;
+                    return dict[key] || key;
+                },
+
+                toggleEditProduct(id) {
+                    if (this.editingProductId === id) {
+                        this.editingProductId = null;
+                    } else {
+                        this.editingProductId = id;
+                        this.selectedProductId = id;
+                    }
+                },
+
+                toggleTheme() {
+                    this.isDarkMode = !this.isDarkMode;
+                    localStorage.setItem('theme', this.isDarkMode ? 'dark' : 'light');
+                    this.updateDarkMode();
+                    this.showToast(this.isDarkMode ? this.t('darkMode') : this.t('lightMode'));
+                },
+
+                updateDarkMode() {
+                    if (this.isDarkMode) {
+                        document.documentElement.classList.add('dark');
+                        if (document.body) {
+                            document.body.classList.add('dark', 'bg-slate-950', 'text-slate-100');
+                            document.body.classList.remove('bg-slate-100', 'text-slate-800');
+                        }
+                    } else {
+                        document.documentElement.classList.remove('dark');
+                        if (document.body) {
+                            document.body.classList.remove('dark', 'bg-slate-950', 'text-slate-100');
+                            document.body.classList.add('bg-slate-100', 'text-slate-800');
+                        }
+                    }
+                },
+
+                toggleLang() {
+                    this.currentLang = this.currentLang === 'zh' ? 'en' : 'zh';
+                    localStorage.setItem('lang', this.currentLang);
+                    this.showToast(this.currentLang === 'en' ? 'Language switched to English' : '已切换为中文界面');
+                },
+
+                showToast(message, type = 'info') {
+                    if (this.toastTimeout) clearTimeout(this.toastTimeout);
+                    this.toast = { show: true, message, type };
+                    this.toastTimeout = setTimeout(() => {
+                        this.toast.show = false;
+                    }, 2500);
+                },
+
+                openConfirmModal({ title, message, danger = true, confirmText = '', cancelText = '', onConfirm }) {
+                    this.confirmModal = {
+                        show: true,
+                        title,
+                        message,
+                        danger,
+                        confirmText: confirmText || this.t('confirm'),
+                        cancelText: cancelText || this.t('cancel'),
+                        onConfirm
+                    };
+                },
+
+                executeConfirmModal() {
+                    if (typeof this.confirmModal.onConfirm === 'function') {
+                        this.confirmModal.onConfirm();
+                    }
+                    this.confirmModal.show = false;
+                },
+
+                openExportModal() {
+                    if (!this.activePromptVersion) return;
+                    this.importExportModal.jsonText = JSON.stringify(this.activePromptVersion, null, 2);
+                    this.importExportModal.show = true;
+                },
+
+                async copyModalJson() {
+                    try {
+                        await navigator.clipboard.writeText(this.importExportModal.jsonText);
+                        this.showToast('JSON 已复制到剪贴板');
+                    } catch (e) {
+                        this.showToast('复制失败，请手动选择复制', 'error');
+                    }
+                },
+
+                applyImportJson() {
+                    try {
+                        const imported = JSON.parse(this.importExportModal.jsonText);
+                        if (!imported || typeof imported !== 'object' || !imported.prompts) {
+                            throw new Error('无效的提示词结构');
+                        }
+                        const newVer = {
+                            id: 'ver_' + Date.now(),
+                            name: (imported.name || '导入版本') + ' (导入)',
+                            author: imported.author || 'Imported',
+                            prompts: imported.prompts || {}
+                        };
+                        this.promptVersions.push(newVer);
+                        this.activePromptVersionId = newVer.id;
+                        this.savePromptVersions();
+                        this.importExportModal.show = false;
+                        this.showToast(`成功导入为新版本: ${newVer.name}`);
+                    } catch (e) {
+                        this.showToast('导入失败: ' + e.message, 'error');
+                    }
+                },
+
+                initDefaultData() {
+                    this.products = [
+                        {
+                            id: 'p1',
+                            title: 'iPhone 15 Pro 256G 原野钛金属',
+                            price: 5800,
+                            desc: '国行双卡，电池健康度92%，全套原盒带小票。无拆无修，屏幕微瑕保护膜贴上不可见。仅接受小刀，大刀勿扰。',
+                            ai_prompt: '底价5600元，少于5600坚决卖不了，同城可面交送护壳。'
+                        },
+                        {
+                            id: 'p2',
+                            title: 'Sony WH-1000XM5 头戴式降噪耳机',
+                            price: 1650,
+                            desc: '黑色，99新，箱提配件齐全。仅戴过几次，几乎无使用痕迹，降噪功能完好。不包邮。',
+                            ai_prompt: '底价1550元，运费买家自理，急售可当天发顺丰。'
+                        },
+                        {
+                            id: 'p3',
+                            title: 'MacBook Air M2 16G+512G 星空灰',
+                            price: 6800,
+                            desc: '官方箱充全，电池循环40次。充新无划痕。适合办公剪辑。',
+                            ai_prompt: '底价6600元，附送原装扩展坞。'
+                        }
+                    ];
+                    this.selectedProductId = 'p1';
+
+                    this.promptVersions = [
+                        {
+                            id: 'v1',
+                            name: '标准场景 (默认生产版本)',
+                            author: '系统预设',
+                            prompts: {
+                                price: "你是一位专业且有礼貌的二手客服。根据买家提出的降价要求进行合理谈判。\n- 标价: ¥{price}\n- 当前降价底线: 不得低于优惠后的极限价格\n- 议价原则: 语气诚恳，解释商品质量与成本，若超出允许的最大降价幅度或超过限定轮次，请礼貌拒绝。",
+                                tech: "你是一位精通各类数码与商品参数的专家客服。\n- 根据【商品详情描述】耐心回答买家的成色、参数、配件、拆修情况等细节。\n- 务必基于已知事实回答，未提及的细节要诚实说明。",
+                                default: "你是一位热情周到的客服。\n- 友好解答关于是否在售、包邮发货时间等常见日常问答。\n- 引导有诚意的买家下单。"
+                            }
+                        },
+                        {
+                            id: 'v2',
+                            name: '快速成交策略 (高优惠倾斜)',
+                            author: '运营团队',
+                            prompts: {
+                                price: "你是一位急于清仓变现的二手卖家。\n- 只要买家诚心想要，可以积极释放优惠（在许可的最大折扣范围内）。\n- 强调今天拍下即可优先顺丰包邮发货，促成买家立刻付款下单。",
+                                tech: "解答务必干脆利落，重点突出商品性价比极高、保养极佳，消除买家顾虑。",
+                                default: "热情主动，多用亲切语气词，主动询问买家送货地址或需求。"
+                            }
+                        }
+                    ];
+                    this.activePromptVersionId = 'v1';
+                    this.updateActiveVersionJson();
+                },
+
+                loadFromStorage() {
+                    try {
+                        const savedConfig = localStorage.getItem('appConfig');
+                        if (savedConfig) this.config = { ...this.config, ...JSON.parse(savedConfig) };
+
+                        const savedProducts = localStorage.getItem('products');
+                        if (savedProducts) this.products = JSON.parse(savedProducts);
+
+                        const savedPromptVer = localStorage.getItem('promptVersions');
+                        if (savedPromptVer) this.promptVersions = JSON.parse(savedPromptVer);
+
+                        const savedActiveVerId = localStorage.getItem('activePromptVersionId');
+                        if (savedActiveVerId && this.promptVersions.some(v => String(v.id) === String(savedActiveVerId))) {
+                            this.activePromptVersionId = savedActiveVerId;
+                        }
+
+                        const savedSessions = localStorage.getItem('chatSessions');
+                        if (savedSessions) this.chatSessions = JSON.parse(savedSessions);
+
+                        const savedSelectedId = localStorage.getItem('selectedProductId');
+                        if (savedSelectedId && this.products.some(p => String(p.id) === String(savedSelectedId))) {
+                            this.selectedProductId = savedSelectedId;
+                        } else if (this.products.length > 0) {
+                            this.selectedProductId = this.products[0].id;
+                        }
+
+                        if (!this.products || this.products.length === 0 || !this.promptVersions || this.promptVersions.length === 0) {
+                            this.initDefaultData();
+                            this.saveToStorage();
+                        }
+                        this.updateActiveVersionJson();
+                    } catch (e) {
+                        console.error("加载存储失败, 使用默认值:", e);
+                        this.initDefaultData();
+                    }
+                },
+
+                saveToStorage() {
+                    try {
+                        localStorage.setItem('appConfig', JSON.stringify(this.config));
+                        localStorage.setItem('products', JSON.stringify(this.products));
+                        localStorage.setItem('promptVersions', JSON.stringify(this.promptVersions));
+                        localStorage.setItem('activePromptVersionId', String(this.activePromptVersionId));
+                        localStorage.setItem('chatSessions', JSON.stringify(this.chatSessions));
+                        if (this.selectedProductId) {
+                            localStorage.setItem('selectedProductId', String(this.selectedProductId));
+                        }
+                    } catch (e) {
+                        console.error("保存存储失败:", e);
+                    }
+                },
+
+                onPromptVersionChange() {
+                    this.saveToStorage();
+                    this.updateActiveVersionJson();
+                    this.showToast(`已切换提示词版本为: ${this.activePromptVersion?.name}`);
+                },
+
+                updateActiveVersionJson() {
+                    if (this.activePromptVersion) {
+                        this.activePromptVersionJson = JSON.stringify(this.activePromptVersion, null, 2);
+                    }
+                },
+
+                updateVersionFromJson() {
+                    try {
+                        const parsed = JSON.parse(this.activePromptVersionJson);
+                        if (parsed && typeof parsed === 'object' && parsed.prompts) {
+                            const idx = this.promptVersions.findIndex(v => String(v.id) === String(this.activePromptVersionId));
+                            if (idx !== -1) {
+                                this.promptVersions[idx] = { ...this.promptVersions[idx], ...parsed };
+                                this.saveToStorage();
+                            }
+                        }
+                    } catch (e) {
+                        // 正在编辑中，暂不处理 JSON 语法错误
+                    }
+                },
+
+                savePromptVersions(showToast = false) {
+                    this.saveToStorage();
+                    this.updateActiveVersionJson();
+                    if (showToast) this.showToast('提示词版本配置已保存');
+                },
+
+                openCreateVersionModal() {
+                    const newVer = {
+                        id: 'ver_' + Date.now(),
+                        name: `自定义版本 v${this.promptVersions.length + 1}`,
+                        author: '协作成员',
+                        prompts: {
+                            price: this.activePromptVersion?.prompts?.price || '',
+                            tech: this.activePromptVersion?.prompts?.tech || '',
+                            default: this.activePromptVersion?.prompts?.default || ''
+                        }
+                    };
+                    this.promptVersions.push(newVer);
+                    this.activePromptVersionId = newVer.id;
+                    this.savePromptVersions();
+                    this.showToast(`已新建提示词版本: ${newVer.name}`);
+                },
+
+                duplicateCurrentVersion() {
+                    if (!this.activePromptVersion) return;
+                    const cur = this.activePromptVersion;
+                    const newVer = {
+                        id: 'ver_' + Date.now(),
+                        name: `${cur.name} (副本)`,
+                        author: cur.author || '成员',
+                        prompts: JSON.parse(JSON.stringify(cur.prompts || {}))
+                    };
+                    this.promptVersions.push(newVer);
+                    this.activePromptVersionId = newVer.id;
+                    this.savePromptVersions();
+                    this.showToast(`已复制为新版本: ${newVer.name}`);
+                },
+
+                deleteCurrentVersion() {
+                    if (this.promptVersions.length <= 1) {
+                        this.showToast('至少保留一个提示词版本', 'error');
+                        return;
+                    }
+                    const curName = this.activePromptVersion?.name || '当前版本';
+                    this.openConfirmModal({
+                        title: '删除提示词版本确认',
+                        message: `确定要删除提示词版本“${curName}”吗？`,
+                        danger: true,
+                        confirmText: '确认删除',
+                        onConfirm: () => {
+                            const idToDelete = this.activePromptVersionId;
+                            this.promptVersions = this.promptVersions.filter(v => String(v.id) !== String(idToDelete));
+                            this.activePromptVersionId = this.promptVersions[0].id;
+                            this.savePromptVersions();
+                            this.showToast('已成功删除提示词版本');
+                        }
+                    });
+                },
+
+                saveConfig() {
+                    this.saveToStorage();
+                    this.showToast('全局配置已成功保存');
+                },
+
+                resetConfig() {
+                    this.config = {
+                        provider_type: 'openai_compatible',
+                        base_url: 'https://api.openai.com/v1',
+                        api_key: '',
+                        model_name: 'qwen-plus',
+                        max_discount_percent: 10,
+                        max_discount_amount: 100,
+                        max_bargain_rounds: 3,
+                        price_keywords: '便宜, 优惠, 刀, 降价, 价格, 多少钱, 能少, 还能, 最低, 底价, 实诚价, 到100, 能到, 包个邮, 少点, 便宜点',
+                        tech_keywords: '怎么用, 参数, 坏了, 故障, 设置, 说明书, 功能, 用法, 教程, 驱动, 尺码, 新旧, 正品, 拆过, 修过',
+                        default_keywords: '在吗, 还在吗, 快递, 包邮, 发货, 什么时候发, 拍下'
+                    };
+                    this.saveToStorage();
+                    this.showToast('已重置为默认配置');
+                },
+
+                selectProduct(id) {
+                    this.selectedProductId = id;
+                    if (!this.chatSessions[id]) {
+                        this.chatSessions[id] = { messages: [], bargainCount: 0 };
+                    }
+                    this.saveToStorage();
+                    this.scrollToBottom();
+                    if (window.innerWidth < 768) {
+                        this.activeMobileView = 'chat';
+                    }
+                },
+
+                addProduct() {
+                    const newId = 'p_' + Date.now();
+                    const newProduct = {
+                        id: newId,
+                        title: '新测试商品 ' + (this.products.length + 1),
+                        price: 99,
+                        desc: '在这里填写商品详情和成色说明...',
+                        ai_prompt: ''
+                    };
+                    this.products.unshift(newProduct);
+                    this.selectedProductId = newId;
+                    this.editingProductId = newId;
+                    if (!this.chatSessions[newId]) {
+                        this.chatSessions[newId] = { messages: [], bargainCount: 0 };
+                    }
+                    this.activeMobileView = 'sidebar';
+                    this.saveToStorage();
+                    this.showToast('已新建测试商品，请直接在此展开编辑');
+                },
+
+                updateProduct() {
+                    this.saveToStorage();
+                    this.showToast('商品信息保存成功');
+                },
+
+                duplicateProduct(id) {
+                    const source = this.products.find(p => String(p.id) === String(id));
+                    if (!source) return;
+                    const newId = 'p_' + Date.now();
+                    const newProduct = {
+                        ...JSON.parse(JSON.stringify(source)),
+                        id: newId,
+                        title: source.title + ' (副本)'
+                    };
+                    const idx = this.products.findIndex(p => String(p.id) === String(id));
+                    if (idx !== -1) {
+                        this.products.splice(idx + 1, 0, newProduct);
+                    } else {
+                        this.products.unshift(newProduct);
+                    }
+
+                    this.selectProduct(newId);
+                    this.saveToStorage();
+                    this.showToast('已复制商品“' + source.title + '”');
+                },
+
+                deleteProduct(targetId) {
+                    const idToDelete = targetId !== undefined && targetId !== null ? targetId : this.selectedProductId;
+                    if (!idToDelete) return;
+
+                    const product = this.products.find(p => String(p.id) === String(idToDelete));
+                    const title = product ? product.title : '选中的商品';
+
+                    this.openConfirmModal({
+                        title: this.t('deleteTooltip'),
+                        message: `确定要删除商品“${title}”吗？关联的对话记录也将被清空。`,
+                        danger: true,
+                        confirmText: this.t('delete'),
+                        onConfirm: () => {
+                            this.products = this.products.filter(p => String(p.id) !== String(idToDelete));
+                            delete this.chatSessions[idToDelete];
+
+                            if (String(this.selectedProductId) === String(idToDelete)) {
+                                this.selectedProductId = this.products.length > 0 ? this.products[0].id : null;
+                            }
+
+                            this.saveToStorage();
+                            this.showToast('商品已成功删除');
+                        }
+                    });
+                },
+
+                clearChatSession() {
+                    if (!this.selectedProductId) return;
+                    this.openConfirmModal({
+                        title: this.t('clearChatBtn'),
+                        message: '确定要清空当前商品的对话历史吗？',
+                        danger: false,
+                        confirmText: this.t('confirm'),
+                        onConfirm: () => {
+                            this.chatSessions[this.selectedProductId] = { messages: [], bargainCount: 0 };
+                            this.saveToStorage();
+                            this.showToast('对话历史已清空');
+                        }
+                    });
+                },
+
+                resetBargainCount() {
+                    if (!this.selectedProductId || !this.chatSessions[this.selectedProductId]) return;
+                    this.chatSessions[this.selectedProductId].bargainCount = 0;
+                    this.saveToStorage();
+                    this.showToast('议价轮次已重置为 0');
+                },
+
+                parseKeywords(raw, defaultArr) {
+                    if (!raw && raw !== '') return defaultArr;
+                    if (Array.isArray(raw)) return raw;
+                    const items = String(raw).split(/[,，\n]/).map(s => s.trim()).filter(Boolean);
+                    return items.length > 0 ? items : defaultArr;
+                },
+
+                detectIntent(message) {
+                    if (!message) return 'default';
+                    const msgLower = message.toLowerCase();
+                    
+                    const priceKws = this.parseKeywords(this.config.price_keywords, [
+                        '便宜', '优惠', '刀', '降价', '价格', '多少钱', '能少', '还能', '最低', '底价', '实诚价', '到100', '能到', '包个邮', '少点', '便宜点',
+                        'cheap', 'discount', 'lower', 'best price', 'deal', 'cut'
+                    ]);
+                    const techKws = this.parseKeywords(this.config.tech_keywords, [
+                        '怎么用', '参数', '坏了', '故障', '设置', '说明书', '功能', '用法', '教程', '驱动', '尺码', '新旧', '正品', '拆过', '修过',
+                        'how to', 'spec', 'specs', 'broken', 'manual', 'feature', 'condition', 'authentic'
+                    ]);
+                    
+                    if (priceKws.some(kw => kw && msgLower.includes(kw.toLowerCase()))) {
+                        return 'price';
+                    }
+                    if (techKws.some(kw => kw && msgLower.includes(kw.toLowerCase()))) {
+                        return 'tech';
+                    }
+                    return 'default';
+                },
+
+                buildSystemPrompt(intent) {
+                    const activePrompts = this.activePromptVersion?.prompts || {};
+                    let basePrompt = activePrompts[intent] || activePrompts['default'] || "你是一位专业的 AI 客服人员。";
+                    
+                    const product = this.selectedProduct;
+                    if (!product) return basePrompt;
+
+                    const bargainCount = (this.chatSessions[this.selectedProductId]?.bargainCount) || 0;
+
+                    let systemPrompt = `${basePrompt}\n\n`;
+                    systemPrompt += `=== 当前测试商品属性 ===\n`;
+                    systemPrompt += `【标题】${product.title}\n`;
+                    systemPrompt += `【标价】¥${product.price}\n`;
+                    systemPrompt += `【商品详情描述】${product.desc || '无'}\n`;
+                    if (product.ai_prompt) {
+                        systemPrompt += `【卖家设定专属附加提示词】${product.ai_prompt}\n`;
+                    }
+
+                    if (intent === 'price') {
+                        const maxPct = this.config.max_discount_percent || 0;
+                        const maxAmt = this.config.max_discount_amount || 0;
+                        const maxRounds = this.config.max_bargain_rounds || 3;
+                        
+                        const discountByPct = product.price * (maxPct / 100);
+                        const actualMaxDiscount = Math.min(discountByPct, maxAmt);
+                        const minAllowedPrice = Math.max(0, product.price - actualMaxDiscount);
+
+                        systemPrompt += `\n=== 议价限制策略 ===\n`;
+                        systemPrompt += `【最大允许折扣比例】${maxPct}%\n`;
+                        systemPrompt += `【最大允许优惠金额】¥${actualMaxDiscount.toFixed(2)}\n`;
+                        systemPrompt += `【允许降价的最高底线】¥${minAllowedPrice.toFixed(2)}\n`;
+                        systemPrompt += `【买家当前议价轮数】第 ${bargainCount + 1} 轮 (最大允许 ${maxRounds} 轮)\n`;
+
+                        if (bargainCount >= maxRounds) {
+                            systemPrompt += `⚠️ 注意：买家议价轮数已达到或超过最大上限(${maxRounds}轮)，请礼貌且明确地拒绝进一步降价，告知已是最低成交价。\n`;
+                        }
+                    }
+
+                    return systemPrompt;
+                },
+
+                sendQuickMessage(text) {
+                    this.inputMessage = text;
+                    this.sendMessage();
+                },
+
+                async sendMessage() {
+                    const text = this.inputMessage.trim();
+                    if (!text || !this.selectedProductId || this.isLoading) return;
+
+                    const productId = this.selectedProductId;
+                    if (!this.chatSessions[productId]) {
+                        this.chatSessions[productId] = { messages: [], bargainCount: 0 };
+                    }
+
+                    const session = this.chatSessions[productId];
+                    const intent = this.detectIntent(text);
+
+                    if (intent === 'price') {
+                        session.bargainCount = (session.bargainCount || 0) + 1;
+                    }
+
+                    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    
+                    session.messages.push({
+                        role: 'user',
+                        content: text,
+                        intent: intent,
+                        timestamp: nowStr
+                    });
+
+                    this.inputMessage = '';
+                    this.isLoading = true;
+                    this.saveToStorage();
+                    this.scrollToBottom();
+
+                    const startTime = Date.now();
+                    const systemPrompt = this.buildSystemPrompt(intent);
+
+                    try {
+                        const apiMessages = session.messages.map(m => ({
+                            role: m.role,
+                            content: m.content
+                        }));
+
+                        const requestPayload = {
+                            provider_type: this.config.provider_type,
+                            base_url: this.config.base_url,
+                            api_key: this.config.api_key,
+                            model_name: this.config.model_name,
+                            system_prompt: systemPrompt,
+                            messages: apiMessages
+                        };
+
+                        let resText = '';
+                        
+                        if (window.location.origin && window.location.origin !== 'null') {
+                            try {
+                                const response = await fetch('/api/chat', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(requestPayload)
+                                });
+                                const data = await response.json();
+                                if (data && data.reply) {
+                                    resText = data.reply;
+                                } else if (data && data.error) {
+                                    throw new Error(data.error);
+                                }
+                            } catch (e) {
+                                resText = await this.fallbackDirectApiCall(requestPayload);
+                            }
+                        } else {
+                            resText = await this.fallbackDirectApiCall(requestPayload);
+                        }
+
+                        const duration = Date.now() - startTime;
+
+                        session.messages.push({
+                            role: 'assistant',
+                            content: resText,
+                            intent: intent,
+                            promptVersionName: this.activePromptVersion?.name,
+                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        });
+
+                        this.debugInfo = {
+                            intent,
+                            promptVersionName: this.activePromptVersion?.name,
+                            duration,
+                            systemPrompt,
+                            userPrompt: text,
+                            rawResponse: resText
+                        };
+
+                        this.saveToStorage();
+                    } catch (err) {
+                        session.messages.push({
+                            role: 'assistant',
+                            content: `❌ [请求异常] ${err.message || '网络或 API 配置错误'}`,
+                            intent: intent,
+                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        });
+                        this.showToast('AI 响应异常，请检查 API 配置', 'error');
+                    } finally {
+                        this.isLoading = false;
+                        this.scrollToBottom();
+                    }
+                },
+
+                async fallbackDirectApiCall(payload) {
+                    if (!payload.api_key) {
+                        return "⚠️ 尚未配置 API Key。请在左侧【API & 策略】面板填入您的 API Key 并点击保存，即可开始实时模型测试。";
+                    }
+
+                    if (payload.provider_type === 'openai_compatible') {
+                        const url = (payload.base_url || 'https://api.openai.com/v1').replace(/\/+$/, '') + '/chat/completions';
+                        const body = {
+                            model: payload.model_name || 'gpt-3.5-turbo',
+                            messages: [
+                                { role: 'system', content: payload.system_prompt },
+                                ...payload.messages
+                            ]
+                        };
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${payload.api_key}`
+                            },
+                            body: JSON.stringify(body)
+                        });
+                        const json = await res.json();
+                        if (json.choices && json.choices[0] && json.choices[0].message) {
+                            return json.choices[0].message.content;
+                        }
+                        if (json.error) {
+                            throw new Error(json.error.message || JSON.stringify(json.error));
+                        }
+                        return JSON.stringify(json);
+                    } else if (payload.provider_type === 'gemini') {
+                        const model = payload.model_name || 'gemini-1.5-flash';
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${payload.api_key}`;
+                        const contents = payload.messages.map(m => ({
+                            role: m.role === 'user' ? 'user' : 'model',
+                            parts: [{ text: m.content }]
+                        }));
+                        const body = {
+                            systemInstruction: { parts: [{ text: payload.system_prompt }] },
+                            contents
+                        };
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+                        const json = await res.json();
+                        if (json.candidates && json.candidates[0]?.content?.parts[0]?.text) {
+                            return json.candidates[0].content.parts[0].text;
+                        }
+                        if (json.error) {
+                            throw new Error(json.error.message || JSON.stringify(json.error));
+                        }
+                        return JSON.stringify(json);
+                    } else {
+                        return `已触发直接 API 调用逻辑，请确保后端 API Proxy 服务的连通性。`;
+                    }
+                },
+
+                scrollToBottom() {
+                    this.$nextTick(() => {
+                        const container = this.$refs.messagesContainer;
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    });
+                },
+
+                clearDebug() {
+                    this.debugInfo = null;
+                }
+            },
+            mounted() {
+                this.loadFromStorage();
+                this.updateDarkMode();
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
