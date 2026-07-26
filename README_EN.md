@@ -16,13 +16,13 @@ An open-source evaluation, testing, and Prompt engineering platform for Large La
 ## 📷 Interface Screenshots
 
 ### 🖥️ 1. Desktop Interface (Dual-Panel Evaluation Workspace)
-![Desktop Interface Preview](desktop_preview.jpg)
+![Desktop Interface Preview](desktop_preview.png)
 
 ### 📱 2. Mobile Interface (Responsive View)
 <p align="center">
-  <img src="mobile_preview_1.jpg" width="45%" alt="Mobile View - Prompt Versions & Multi-Intent Editor" />
+  <img src="mobile_preview_1.png" width="45%" alt="Mobile View - Prompt Versions & Multi-Intent Editor" />
   &nbsp;&nbsp;
-  <img src="mobile_preview_2.jpg" width="45%" alt="Mobile View - Chat Evaluation Test" />
+  <img src="mobile_preview_2.png" width="45%" alt="Mobile View - Chat Evaluation Test" />
 </p>
 
 ---
