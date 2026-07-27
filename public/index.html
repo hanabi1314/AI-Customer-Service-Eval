@@ -1506,7 +1506,7 @@
 
                         let resText = '';
                         
-                        if (window.location.origin && window.location.origin !== 'null') {
+                        if (window.location.protocol.startsWith('http')) {
                             try {
                                 const response = await fetch('/api/chat', {
                                     method: 'POST',
@@ -1609,6 +1609,59 @@
                         const json = await res.json();
                         if (json.candidates && json.candidates[0]?.content?.parts[0]?.text) {
                             return json.candidates[0].content.parts[0].text;
+                        }
+                        if (json.error) {
+                            throw new Error(json.error.message || JSON.stringify(json.error));
+                        }
+                        return JSON.stringify(json);
+                    } else if (payload.provider_type === 'anthropic') {
+                        const url = (payload.base_url || 'https://api.anthropic.com/v1').replace(/\/+$/, '') + '/messages';
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-api-key': payload.api_key,
+                                'anthropic-version': '2023-06-01'
+                            },
+                            body: JSON.stringify({
+                                model: payload.model_name || 'claude-3-5-sonnet-20241022',
+                                max_tokens: 2048,
+                                system: payload.system_prompt,
+                                messages: payload.messages.map(m => ({
+                                    role: m.role === 'user' ? 'user' : 'assistant',
+                                    content: m.content
+                                }))
+                            })
+                        });
+                        const json = await res.json();
+                        if (json.content && json.content[0] && json.content[0].text) {
+                            return json.content[0].text;
+                        }
+                        if (json.error) {
+                            throw new Error(json.error.message || JSON.stringify(json.error));
+                        }
+                        return JSON.stringify(json);
+                    } else if (payload.provider_type === 'dashscope_app') {
+                        const baseUrl = payload.base_url || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+                        const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
+                        const body = {
+                            model: payload.model_name || 'qwen-plus',
+                            messages: [
+                                { role: 'system', content: payload.system_prompt },
+                                ...payload.messages
+                            ]
+                        };
+                        const res = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${payload.api_key}`
+                            },
+                            body: JSON.stringify(body)
+                        });
+                        const json = await res.json();
+                        if (json.choices && json.choices[0] && json.choices[0].message) {
+                            return json.choices[0].message.content;
                         }
                         if (json.error) {
                             throw new Error(json.error.message || JSON.stringify(json.error));

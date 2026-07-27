@@ -66,14 +66,23 @@ When testing or deploying AI customer service models, connecting to overseas AI 
 
 ```
 ai-customer-service-eval/
-├── public/
-│   └── index.html          # Web UI (Vue 3 + Tailwind CSS)
-├── server.js               # Node.js (Express) server (MySQL & file storage)
-├── package.json            # Project dependencies & scripts
-├── .env.example            # Environment variables & MySQL template
+├── public/                 # Web UI directory (Vue 3 + Tailwind CSS)
+│   └── index.html          # Web UI & chat testing interface
+├── data/                   # Local file storage directory (saved to data/db.json if MySQL is unconfigured)
+├── server.js               # Node.js (Express) backend server (MySQL / File Storage / AI Proxy)
+├── package.json            # Project dependencies & npm scripts
+├── .env.example            # Environment variables & MySQL config template
+├── .gitignore              # Git ignore rules
+├── bun.lock                # Bun lockfile
+├── LICENSE                 # MIT License
+├── metadata.json           # Application metadata
+├── API.md                  # RESTful API documentation
 ├── DEPLOYMENT.md           # AA-Panel / BT-Panel deployment guide
 ├── README.md               # Chinese documentation
-└── README_EN.md            # English documentation
+├── README_EN.md            # English documentation
+├── desktop_preview.png     # Desktop preview screenshot
+├── mobile_preview_1.png    # Mobile preview screenshot 1
+└── mobile_preview_2.png    # Mobile preview screenshot 2
 ```
 
 ---
@@ -105,13 +114,23 @@ The frontend is built with Vue 3 + Tailwind CSS in a single file and can run com
 2. **Run via Local HTTP Server (Recommended)**:
    To run in a standard HTTP environment, launch Python's built-in web server from the project root:
    ```bash
+   # Python 3.7+ (supports -d flag):
    python3 -m http.server 8080 -d public
+
+   # Any Python version:
+   cd public && python3 -m http.server 8080
    ```
    Then open `http://localhost:8080` in your browser.
 
 ### Option 3: AA-Panel / BT-Panel Deployment
 
 Deploy as a Node.js project in BT-Panel with optional MySQL support. Refer to [DEPLOYMENT.md Guide](DEPLOYMENT.md).
+
+---
+
+## 📡 REST API Documentation
+
+For endpoints `/api/products`, `/api/sessions`, `/api/config`, `/api/chat`, and `/api/proxy`, refer to [API.md](API.md).
 
 ---
 

@@ -66,14 +66,23 @@
 
 ```
 ai-customer-service-eval/
-├── public/
-│   └── index.html          # 单页 Web UI 界面 (Vue 3 + Tailwind CSS)
-├── server.js               # Node.js (Express) 后端服务 (支持 MySQL / 文件持久化)
-├── package.json            # 项目依赖说明与启动脚本
-├── .env.example            # 环境变量与 MySQL 数据库配置参考模板
+├── public/                 # 单页 Web UI 界面目录 (Vue 3 + Tailwind CSS)
+│   └── index.html          # 前端交互与测试界面
+├── data/                   # 本地文件存储目录 (未配置 MySQL 时自动落盘于 data/db.json)
+├── server.js               # Node.js (Express) 后端服务 (支持 MySQL / 文件存储 / AI 代理)
+├── package.json            # 项目依赖与 npm 启动脚本
+├── .env.example            # 环境变量与 MySQL 数据库配置模板
+├── .gitignore              # Git 忽略文件规则
+├── bun.lock                # Bun 锁定文件
+├── LICENSE                 # 开源许可证 (MIT)
+├── metadata.json           # 项目元数据配置
+├── API.md                  # RESTful API 接口说明文档
 ├── DEPLOYMENT.md           # 宝塔面板 (BT-Panel / AA-Panel) 详细部署教程
 ├── README.md               # 中文说明文档
-└── README_EN.md            # 英文说明文档
+├── README_EN.md            # 英文说明文档
+├── desktop_preview.png     # 桌面端预览图
+├── mobile_preview_1.png    # 移动端预览图 1
+└── mobile_preview_2.png    # 移动端预览图 2
 ```
 
 ---
@@ -107,13 +116,23 @@ npm start
 2. **使用本地轻量 HTTP 服务器（推荐）**：
    如果希望获得更规范的 HTTP 环境，可直接在项目根目录下使用 Python 启动：
    ```bash
+   # Python 3.7+ 支持 -d 参数：
    python3 -m http.server 8080 -d public
+
+   # 或在任意 Python 版本下直接进入 public 目录启动：
+   cd public && python3 -m http.server 8080
    ```
    随后在浏览器访问 `http://localhost:8080` 即可使用。
 
 ### 方式三：宝塔面板部署 (生产推荐)
 
 请查阅专用的 [宝塔面板部署教程 (DEPLOYMENT.md)](DEPLOYMENT.md)，支持一键挂载宝塔 MySQL 数据库与 Nginx 反向代理。
+
+---
+
+## 📡 REST API 接口文档
+
+关于 `/api/products`、`/api/sessions`、`/api/config`、`/api/chat` 和 `/api/proxy` 等端点的参数与 JSON 示例，请参阅 [API.md 说明文档](API.md)。
 
 ---
 

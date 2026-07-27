@@ -8,6 +8,18 @@ import mysql from 'mysql2/promise';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// 加载 .env 环境变量文件 (原生支持 Node.js 20.6+)
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  try {
+    if (typeof process.loadEnvFile === 'function') {
+      process.loadEnvFile(envPath);
+    }
+  } catch (e) {
+    console.warn('[Env] 加载 .env 文件提示:', e.message);
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -26,36 +38,35 @@ let storageMode = 'file'; // 'mysql', 'file', 'memory'
 // 默认基础数据
 let products = [
   {
-    id: 1,
+    id: 'p1',
     title: 'iPhone 15 Pro 256G 原野钛金属',
     price: 5800,
-    desc: '国行双卡，电池健康92%，全套原盒带小票。无拆无修，屏幕微瑕保护膜贴上不可见。仅接受小刀，大刀勿扰。',
+    desc: '国行双卡，电池健康度92%，全套原盒带小票。无拆无修，屏幕微瑕保护膜贴上不可见。仅接受小刀，大刀勿扰。',
     ai_prompt: '底价5600元，少于5600坚决卖不了，同城可面交送护壳。',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   },
   {
-    id: 2,
+    id: 'p2',
     title: 'Sony WH-1000XM5 头戴式降噪耳机',
     price: 1650,
-    desc: '功能全好，降噪与音质绝佳，充一次电续航超长。保修期内，全套盒说齐全。',
-    ai_prompt: '最多优惠50元，包邮顺丰。',
+    desc: '黑色，99新，箱提配件齐全。仅戴过几次，几乎无使用痕迹，降噪功能完好。不包邮。',
+    ai_prompt: '底价1550元，运费买家自理，急售可当天发顺丰。',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   },
   {
-    id: 3,
+    id: 'p3',
     title: 'MacBook Air M2 16G+512G 星空灰',
     price: 6800,
-    desc: '电池循环45次，98新无磕碰，轻薄便携，办公神器。带原装35W双口充电器。',
-    ai_prompt: '接受微刀，底价6600元。',
+    desc: '官方箱充全，电池循环40次。充新无划痕。适合办公剪辑。',
+    ai_prompt: '底价6600元，附送原装扩展坞。',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   }
 ];
 
 let chatSessions = {};
-let nextProductId = 4;
 let nextSessionId = 1;
 
 let globalConfig = {
@@ -66,8 +77,10 @@ let globalConfig = {
   max_discount_percent: 10,
   max_discount_amount: 50,
   max_bargain_rounds: 3,
+  price_keywords: '便宜, 优惠, 刀, 降价, 价格, 多少钱, 能少, 还能, 最低, 底价, 实诚价, 到100, 能到, 包个邮, 少点, 便宜点',
+  tech_keywords: '怎么用, 参数, 坏了, 故障, 设置, 说明书, 功能, 用法, 教程, 驱动, 尺码, 新旧, 正品, 拆过, 修过',
+  default_keywords: '在吗, 还在吗, 快递, 包邮, 发货, 什么时候发, 拍下',
   custom_prompts: {
-    classify: '你是一个闲鱼商品意图识别助手。请分析用户消息的意图。',
     price: '你是一个专业的闲鱼卖家助手。用户在询问价格优惠。商品：{title}，价格：{price}元。最大优惠：{max_discount}% 或 {max_discount_amount}元。已议价{bargain_count}轮，最多{max_rounds}轮。请友好回复。',
     tech: '你是一个专业的产品技术支持。用户在咨询商品细节。商品：{title}，描述：{desc}。请专业解答。',
     default: '你是一个友好的闲鱼卖家。商品：{title}，价格：{price}元。请热情回复买家。'
@@ -88,8 +101,7 @@ function loadFromFile() {
       const data = JSON.parse(raw);
       if (data.products && Array.isArray(data.products)) products = data.products;
       if (data.chatSessions) chatSessions = data.chatSessions;
-      if (data.globalConfig) globalConfig = data.globalConfig;
-      if (data.nextProductId) nextProductId = data.nextProductId;
+      if (data.globalConfig) globalConfig = { ...globalConfig, ...data.globalConfig };
       if (data.nextSessionId) nextSessionId = data.nextSessionId;
       console.log('[Storage] 成功从本地文件 data/db.json 加载数据');
     }
@@ -108,7 +120,6 @@ function saveToFile() {
       products,
       chatSessions,
       globalConfig,
-      nextProductId,
       nextSessionId,
       updated_at: new Date().toISOString()
     };
@@ -145,14 +156,14 @@ async function initDatabase() {
     });
 
     // 检查连接
-    const [rows] = await dbPool.query('SELECT 1 + 1 AS result');
+    await dbPool.query('SELECT 1 + 1 AS result');
     console.log('[Storage] MySQL 数据库连接成功！模式切换为 [MySQL 关系型数据库]');
     storageMode = 'mysql';
 
-    // 创建商品表
+    // 创建商品表 (使用 VARCHAR 存储 ID，支持数字和字符串 ID)
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS eval_products (
-        id INT AUTO_INCREMENT PRIMARY KEY,
+        id VARCHAR(64) PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
         price DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
         desc_text TEXT,
@@ -175,7 +186,7 @@ async function initDatabase() {
     await dbPool.query(`
       CREATE TABLE IF NOT EXISTS eval_sessions (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        product_id INT NOT NULL UNIQUE,
+        product_id VARCHAR(64) NOT NULL UNIQUE,
         chat_history LONGTEXT,
         bargain_count INT DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -184,10 +195,10 @@ async function initDatabase() {
     `);
 
     // 加载或初始化数据库默认值
-    const [dbProds] = await dbPool.query('SELECT * FROM eval_products ORDER BY id DESC');
+    const [dbProds] = await dbPool.query('SELECT * FROM eval_products ORDER BY created_at DESC');
     if (dbProds.length > 0) {
       products = dbProds.map(p => ({
-        id: p.id,
+        id: String(p.id),
         title: p.title,
         price: Number(p.price),
         desc: p.desc_text || '',
@@ -195,13 +206,12 @@ async function initDatabase() {
         created_at: p.created_at,
         updated_at: p.updated_at
       }));
-      nextProductId = Math.max(...products.map(p => p.id), 0) + 1;
     } else {
       // 写入默认商品
       for (const p of products) {
         await dbPool.query(
           'INSERT INTO eval_products (id, title, price, desc_text, ai_prompt) VALUES (?, ?, ?, ?, ?)',
-          [p.id, p.title, p.price, p.desc, p.ai_prompt]
+          [String(p.id), p.title, p.price, p.desc, p.ai_prompt]
         );
       }
     }
@@ -223,7 +233,7 @@ async function initDatabase() {
       dbSessions.forEach(s => {
         chatSessions[s.product_id] = {
           id: s.id,
-          product_id: s.product_id,
+          product_id: String(s.product_id),
           chat_history: s.chat_history || '[]',
           bargain_count: s.bargain_count || 0,
           created_at: s.created_at,
@@ -246,11 +256,11 @@ initDatabase();
 // Handlers
 const handleProductsRequest = async (req, res, resourceId) => {
   const method = req.method;
-  const id = resourceId ? parseInt(resourceId, 10) : (req.params.id ? parseInt(req.params.id, 10) : null);
+  const id = resourceId || (req.params ? req.params.id : null);
 
   if (method === 'GET') {
     if (id) {
-      const p = products.find(prod => prod.id === id);
+      const p = products.find(prod => String(prod.id) === String(id));
       if (p) return res.json(p);
       return res.status(404).json({ error: 'Product not found' });
     }
@@ -258,12 +268,12 @@ const handleProductsRequest = async (req, res, resourceId) => {
   }
 
   if (method === 'POST') {
-    const { title, price, desc, ai_prompt } = req.body || {};
+    const { id: reqId, title, price, desc, ai_prompt } = req.body || {};
     if (!title || price === undefined) {
       return res.status(400).json({ error: 'Title and price are required' });
     }
     const newProduct = {
-      id: nextProductId++,
+      id: reqId ? String(reqId) : ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
       title,
       price: Number(price),
       desc: desc || '',
@@ -275,11 +285,10 @@ const handleProductsRequest = async (req, res, resourceId) => {
 
     if (storageMode === 'mysql' && dbPool) {
       try {
-        const [result] = await dbPool.query(
-          'INSERT INTO eval_products (title, price, desc_text, ai_prompt) VALUES (?, ?, ?, ?)',
-          [newProduct.title, newProduct.price, newProduct.desc, newProduct.ai_prompt]
+        await dbPool.query(
+          'INSERT INTO eval_products (id, title, price, desc_text, ai_prompt) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE title=VALUES(title), price=VALUES(price), desc_text=VALUES(desc_text), ai_prompt=VALUES(ai_prompt)',
+          [newProduct.id, newProduct.title, newProduct.price, newProduct.desc, newProduct.ai_prompt]
         );
-        newProduct.id = result.insertId;
       } catch (e) {
         console.error('[MySQL Error]', e.message);
       }
@@ -289,7 +298,7 @@ const handleProductsRequest = async (req, res, resourceId) => {
   }
 
   if (method === 'PUT' && id) {
-    const idx = products.findIndex(p => p.id === id);
+    const idx = products.findIndex(p => String(p.id) === String(id));
     if (idx === -1) return res.status(404).json({ error: 'Product not found' });
     const { title, price, desc, ai_prompt } = req.body || {};
     products[idx] = {
@@ -305,7 +314,7 @@ const handleProductsRequest = async (req, res, resourceId) => {
       try {
         await dbPool.query(
           'UPDATE eval_products SET title=?, price=?, desc_text=?, ai_prompt=? WHERE id=?',
-          [products[idx].title, products[idx].price, products[idx].desc, products[idx].ai_prompt, id]
+          [products[idx].title, products[idx].price, products[idx].desc, products[idx].ai_prompt, String(id)]
         );
       } catch (e) {
         console.error('[MySQL Error]', e.message);
@@ -316,12 +325,13 @@ const handleProductsRequest = async (req, res, resourceId) => {
   }
 
   if (method === 'DELETE' && id) {
-    products = products.filter(p => p.id !== id);
+    products = products.filter(p => String(p.id) !== String(id));
     delete chatSessions[id];
 
     if (storageMode === 'mysql' && dbPool) {
       try {
-        await dbPool.query('DELETE FROM eval_products WHERE id=?', [id]);
+        await dbPool.query('DELETE FROM eval_products WHERE id=?', [String(id)]);
+        await dbPool.query('DELETE FROM eval_sessions WHERE product_id=?', [String(id)]);
       } catch (e) {
         console.error('[MySQL Error]', e.message);
       }
@@ -335,45 +345,46 @@ const handleProductsRequest = async (req, res, resourceId) => {
 
 const handleSessionsRequest = async (req, res, resourceId) => {
   const method = req.method;
-  const id = resourceId ? parseInt(resourceId, 10) : (req.params.id ? parseInt(req.params.id, 10) : null);
+  const id = resourceId || (req.params ? req.params.id : null);
 
   if (method === 'GET') {
     if (id) {
-      const session = Object.values(chatSessions).find(s => s.id === id);
+      const session = Object.values(chatSessions).find(s => String(s.id) === String(id));
       if (session) return res.json(session);
       return res.status(404).json({ error: 'Session not found' });
     }
-    const productId = req.query.product_id ? parseInt(req.query.product_id, 10) : null;
+    const productId = req.query.product_id;
     if (productId) {
-      if (!chatSessions[productId]) {
-        chatSessions[productId] = {
+      const pidStr = String(productId);
+      if (!chatSessions[pidStr]) {
+        chatSessions[pidStr] = {
           id: nextSessionId++,
-          product_id: productId,
+          product_id: pidStr,
           chat_history: '[]',
           bargain_count: 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         };
       }
-      return res.json(chatSessions[productId]);
+      return res.json(chatSessions[pidStr]);
     }
     return res.json(Object.values(chatSessions));
   }
 
   if (method === 'POST' || method === 'PUT') {
     const { product_id, chat_history, bargain_count } = req.body || {};
-    const pid = product_id ? parseInt(product_id, 10) : null;
-    if (!pid) return res.status(400).json({ error: 'product_id is required' });
+    const pidStr = product_id ? String(product_id) : null;
+    if (!pidStr) return res.status(400).json({ error: 'product_id is required' });
 
     const historyStr = typeof chat_history === 'string' ? chat_history : JSON.stringify(chat_history || []);
-    if (chatSessions[pid]) {
-      chatSessions[pid].chat_history = historyStr;
-      chatSessions[pid].bargain_count = bargain_count ?? chatSessions[pid].bargain_count;
-      chatSessions[pid].updated_at = new Date().toISOString();
+    if (chatSessions[pidStr]) {
+      chatSessions[pidStr].chat_history = historyStr;
+      chatSessions[pidStr].bargain_count = bargain_count ?? chatSessions[pidStr].bargain_count;
+      chatSessions[pidStr].updated_at = new Date().toISOString();
     } else {
-      chatSessions[pid] = {
+      chatSessions[pidStr] = {
         id: nextSessionId++,
-        product_id: pid,
+        product_id: pidStr,
         chat_history: historyStr,
         bargain_count: bargain_count || 0,
         created_at: new Date().toISOString(),
@@ -385,23 +396,23 @@ const handleSessionsRequest = async (req, res, resourceId) => {
       try {
         await dbPool.query(
           'INSERT INTO eval_sessions (product_id, chat_history, bargain_count) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE chat_history=VALUES(chat_history), bargain_count=VALUES(bargain_count)',
-          [pid, historyStr, chatSessions[pid].bargain_count]
+          [pidStr, historyStr, chatSessions[pidStr].bargain_count]
         );
       } catch (e) {
         console.error('[MySQL Session Sync Error]', e.message);
       }
     }
     saveToFile();
-    return res.json({ id: chatSessions[pid].id, message: 'Session saved' });
+    return res.json({ id: chatSessions[pidStr].id, message: 'Session saved' });
   }
 
   if (method === 'DELETE' && id) {
-    const key = Object.keys(chatSessions).find(k => chatSessions[k].id === id);
+    const key = Object.keys(chatSessions).find(k => String(chatSessions[k].id) === String(id) || String(k) === String(id));
     if (key) {
       const pid = chatSessions[key].product_id;
       delete chatSessions[key];
       if (storageMode === 'mysql' && dbPool && pid) {
-        dbPool.query('DELETE FROM eval_sessions WHERE product_id=?', [pid]).catch(e => console.error('[MySQL Session Delete Error]', e.message));
+        dbPool.query('DELETE FROM eval_sessions WHERE product_id=?', [String(pid)]).catch(e => console.error('[MySQL Session Delete Error]', e.message));
       }
     }
     saveToFile();
@@ -418,7 +429,8 @@ const handleConfigRequest = async (req, res) => {
   }
   if (method === 'POST' || method === 'PUT') {
     try {
-      globalConfig = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      globalConfig = { ...globalConfig, ...payload };
 
       if (storageMode === 'mysql' && dbPool) {
         try {
@@ -443,11 +455,25 @@ const handleChatRequest = async (req, res) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  const { provider_type, base_url, api_key, model_name, system_prompt, messages } = req.body || {};
+  let { provider_type, base_url, api_key, model_name, system_prompt, messages } = req.body || {};
+
+  if (!api_key) {
+    if (provider_type === 'gemini' && process.env.GEMINI_API_KEY) {
+      api_key = process.env.GEMINI_API_KEY;
+    } else if (provider_type === 'anthropic' && process.env.ANTHROPIC_API_KEY) {
+      api_key = process.env.ANTHROPIC_API_KEY;
+    } else if (process.env.OPENAI_API_KEY) {
+      api_key = process.env.OPENAI_API_KEY;
+    }
+  }
 
   if (!api_key) {
     return res.status(400).json({ error: '请先配置 API Key 以后再测试 AI 对话' });
   }
+
+  const timeoutMs = 35000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     if (provider_type === 'gemini') {
@@ -463,15 +489,73 @@ const handleChatRequest = async (req, res) => {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system_prompt }] },
           contents
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await response.json();
       if (data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
         return res.json({ reply: data.candidates[0].content.parts[0].text });
       }
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      return res.json({ reply: JSON.stringify(data) });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}: ${JSON.stringify(data)}`);
+      return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
+    } else if (provider_type === 'anthropic') {
+      const url = (base_url || 'https://api.anthropic.com/v1').replace(/\/+$/, '') + '/messages';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': api_key,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: model_name || 'claude-3-5-sonnet-20241022',
+          max_tokens: 2048,
+          system: system_prompt,
+          messages: (messages || []).map(m => ({
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content: m.content
+          }))
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const data = await response.json();
+      if (data.content && data.content[0] && data.content[0].text) {
+        return res.json({ reply: data.content[0].text });
+      }
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}: ${JSON.stringify(data)}`);
+      return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
+    } else if (provider_type === 'dashscope_app') {
+      const effectiveBaseUrl = base_url || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+      const url = effectiveBaseUrl.replace(/\/+$/, '') + '/chat/completions';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${api_key}`
+        },
+        body: JSON.stringify({
+          model: model_name || 'qwen-plus',
+          messages: [
+            { role: 'system', content: system_prompt },
+            ...(messages || [])
+          ]
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      const data = await response.json();
+      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+        return res.json({ reply: data.choices[0].message.content });
+      }
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}: ${JSON.stringify(data)}`);
+      return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
     } else {
+      // openai_compatible
       const url = (base_url || 'https://api.openai.com/v1').replace(/\/+$/, '') + '/chat/completions';
       const response = await fetch(url, {
         method: 'POST',
@@ -485,16 +569,23 @@ const handleChatRequest = async (req, res) => {
             { role: 'system', content: system_prompt },
             ...(messages || [])
           ]
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await response.json();
-      if (data.choices && data.choices[0] && data.choices[0].message) {
+      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
         return res.json({ reply: data.choices[0].message.content });
       }
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      return res.json({ reply: JSON.stringify(data) });
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}: ${JSON.stringify(data)}`);
+      return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
     }
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'AI 请求超时：远端 AI 服务响应时间超过 35 秒，请检查网络或更换模型重试' });
+    }
     return res.status(500).json({ error: 'AI 请求服务异常: ' + err.message });
   }
 };
@@ -508,15 +599,21 @@ const handleProxyRequest = async (req, res) => {
     return res.status(400).json({ error: 'URL is required' });
   }
 
+  const timeoutMs = 35000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const fetchOptions = {
       method: body ? 'POST' : 'GET',
-      headers: { ...headers }
+      headers: { ...headers },
+      signal: controller.signal
     };
     if (body) {
       fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
     }
     const response = await fetch(url, fetchOptions);
+    clearTimeout(timeoutId);
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const data = await response.json();
@@ -526,6 +623,10 @@ const handleProxyRequest = async (req, res) => {
       return res.status(response.status).send(text);
     }
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ error: 'Proxy 请求超时：目标服务器响应时间超过 35 秒' });
+    }
     return res.status(500).json({ error: 'Proxy request failed: ' + err.message });
   }
 };
