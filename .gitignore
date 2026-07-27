@@ -1,4 +1,4 @@
-```
+
 # Logs and temp files
 *.log
 
@@ -175,4 +175,3 @@ typings/
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-```
