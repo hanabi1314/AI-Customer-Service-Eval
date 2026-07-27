@@ -333,7 +333,7 @@ const handleProductsRequest = async (req, res, resourceId) => {
   return res.status(405).json({ error: 'Method not allowed' });
 };
 
-const handleSessionsRequest = (req, res, resourceId) => {
+const handleSessionsRequest = async (req, res, resourceId) => {
   const method = req.method;
   const id = resourceId ? parseInt(resourceId, 10) : (req.params.id ? parseInt(req.params.id, 10) : null);
 
@@ -383,10 +383,10 @@ const handleSessionsRequest = (req, res, resourceId) => {
 
     if (storageMode === 'mysql' && dbPool) {
       try {
-        dbPool.query(
+        await dbPool.query(
           'INSERT INTO eval_sessions (product_id, chat_history, bargain_count) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE chat_history=VALUES(chat_history), bargain_count=VALUES(bargain_count)',
           [pid, historyStr, chatSessions[pid].bargain_count]
-        ).catch(e => console.error('[MySQL Session Sync Error]', e.message));
+        );
       } catch (e) {
         console.error('[MySQL Session Sync Error]', e.message);
       }
