@@ -8,7 +8,7 @@ import mysql from 'mysql2/promise';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 加载 .env 环境变量文件 (原生支持 Node.js 20.6+)
+// 加载 .env 环境变量文件 (支持原生 process.loadEnvFile 与手动全版本兼容解析)
 const envPath = path.join(__dirname, '.env');
 if (fs.existsSync(envPath)) {
   try {
@@ -16,8 +16,42 @@ if (fs.existsSync(envPath)) {
       process.loadEnvFile(envPath);
     }
   } catch (e) {
-    console.warn('[Env] 加载 .env 文件提示:', e.message);
+    // 忽略原生提示
   }
+  try {
+    const envContent = fs.readFileSync(envPath, 'utf-8');
+    envContent.split(/\r?\n/).forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx > 0) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (val !== '') {
+            process.env[key] = val;
+          }
+        }
+      }
+    });
+    console.log('[Env] 已加载 .env 配置:', {
+      PORT: process.env.PORT || 3000,
+      STORAGE_MODE: process.env.STORAGE_MODE || 'auto (依据 DB 配置决定)',
+      DB_HOST: process.env.DB_HOST || '(未配置)',
+      DB_NAME: process.env.DB_NAME || '(未配置)',
+      DB_USER: process.env.DB_USER || '(未配置)',
+      BASE_URL: process.env.BASE_URL || process.env.OPENAI_BASE_URL || process.env.API_BASE_URL || '(未配置，使用客户端或默认)',
+      HAS_GEMINI_KEY: !!process.env.GEMINI_API_KEY,
+      HAS_OPENAI_KEY: !!process.env.OPENAI_API_KEY,
+      HAS_ANTHROPIC_KEY: !!process.env.ANTHROPIC_API_KEY
+    });
+  } catch (e) {
+    console.warn('[Env] 手动解析 .env 发生错误:', e.message);
+  }
+} else {
+  console.log('[Env] 根目录未检测到 .env 文件，使用默认配置');
 }
 
 const app = express();
@@ -131,6 +165,21 @@ function saveToFile() {
 
 // MySQL 数据库初始化与自动化建表
 async function initDatabase() {
+  const envStorageMode = (process.env.STORAGE_MODE || 'auto').toLowerCase();
+
+  if (envStorageMode === 'json' || envStorageMode === 'file') {
+    console.log('[Storage] 环境变量 STORAGE_MODE 设为 [' + envStorageMode + ']，强制开启本地 JSON 文件持久化存储模式');
+    storageMode = 'file';
+    loadFromFile();
+    return;
+  }
+
+  if (envStorageMode === 'memory') {
+    console.log('[Storage] 环境变量 STORAGE_MODE 设为 [memory]，强制开启纯内存模式');
+    storageMode = 'memory';
+    return;
+  }
+
   const host = process.env.DB_HOST;
   const user = process.env.DB_USER;
   const password = process.env.DB_PASSWORD || process.env.DB_PASS;
@@ -138,7 +187,12 @@ async function initDatabase() {
   const port = Number(process.env.DB_PORT || 3306);
 
   if (!host || !database || !user) {
-    console.log('[Storage] 未配置 MySQL 环境变量 (DB_HOST, DB_NAME, DB_USER)，自动使用轻量文件存储/内存模式');
+    if (envStorageMode === 'mysql') {
+      console.warn('[Storage] 警告: STORAGE_MODE 设为 mysql，但缺少 DB_HOST/DB_NAME/DB_USER 配置，自动降级为文件存储模式');
+    } else {
+      console.log('[Storage] 未配置 MySQL 环境变量 (DB_HOST, DB_NAME, DB_USER)，自动使用轻量文件存储模式 (data/db.json)');
+    }
+    storageMode = 'file';
     loadFromFile();
     return;
   }
@@ -267,13 +321,14 @@ const handleProductsRequest = async (req, res, resourceId) => {
     return res.json(products);
   }
 
-  if (method === 'POST') {
+  if (method === 'POST' || method === 'PUT') {
     const { id: reqId, title, price, desc, ai_prompt } = req.body || {};
+    const targetId = id || reqId;
     if (!title || price === undefined) {
       return res.status(400).json({ error: 'Title and price are required' });
     }
-    const newProduct = {
-      id: reqId ? String(reqId) : ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
+    const productItem = {
+      id: targetId ? String(targetId) : ('p_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6)),
       title,
       price: Number(price),
       desc: desc || '',
@@ -281,47 +336,27 @@ const handleProductsRequest = async (req, res, resourceId) => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-    products.unshift(newProduct);
+
+    const existingIdx = products.findIndex(p => String(p.id) === String(productItem.id));
+    if (existingIdx !== -1) {
+      products[existingIdx] = { ...products[existingIdx], ...productItem };
+    } else {
+      products.unshift(productItem);
+    }
 
     if (storageMode === 'mysql' && dbPool) {
       try {
         await dbPool.query(
           'INSERT INTO eval_products (id, title, price, desc_text, ai_prompt) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE title=VALUES(title), price=VALUES(price), desc_text=VALUES(desc_text), ai_prompt=VALUES(ai_prompt)',
-          [newProduct.id, newProduct.title, newProduct.price, newProduct.desc, newProduct.ai_prompt]
+          [productItem.id, productItem.title, productItem.price, productItem.desc, productItem.ai_prompt]
         );
+        console.log(`[MySQL Storage] 成功同步更新商品数据 [${productItem.id}]: ${productItem.title}`);
       } catch (e) {
         console.error('[MySQL Error]', e.message);
       }
     }
     saveToFile();
-    return res.status(201).json({ id: newProduct.id, message: 'Product created' });
-  }
-
-  if (method === 'PUT' && id) {
-    const idx = products.findIndex(p => String(p.id) === String(id));
-    if (idx === -1) return res.status(404).json({ error: 'Product not found' });
-    const { title, price, desc, ai_prompt } = req.body || {};
-    products[idx] = {
-      ...products[idx],
-      title: title !== undefined ? title : products[idx].title,
-      price: price !== undefined ? Number(price) : products[idx].price,
-      desc: desc !== undefined ? desc : products[idx].desc,
-      ai_prompt: ai_prompt !== undefined ? ai_prompt : products[idx].ai_prompt,
-      updated_at: new Date().toISOString()
-    };
-
-    if (storageMode === 'mysql' && dbPool) {
-      try {
-        await dbPool.query(
-          'UPDATE eval_products SET title=?, price=?, desc_text=?, ai_prompt=? WHERE id=?',
-          [products[idx].title, products[idx].price, products[idx].desc, products[idx].ai_prompt, String(id)]
-        );
-      } catch (e) {
-        console.error('[MySQL Error]', e.message);
-      }
-    }
-    saveToFile();
-    return res.json({ message: 'Product updated' });
+    return res.status(200).json({ id: productItem.id, message: 'Product saved', product: productItem });
   }
 
   if (method === 'DELETE' && id) {
@@ -425,7 +460,15 @@ const handleSessionsRequest = async (req, res, resourceId) => {
 const handleConfigRequest = async (req, res) => {
   const method = req.method;
   if (method === 'GET') {
-    return res.json(globalConfig);
+    return res.json({
+      ...globalConfig,
+      storage_mode: storageMode,
+      env_keys: {
+        gemini: !!process.env.GEMINI_API_KEY,
+        openai: !!process.env.OPENAI_API_KEY,
+        anthropic: !!process.env.ANTHROPIC_API_KEY
+      }
+    });
   }
   if (method === 'POST' || method === 'PUT') {
     try {
@@ -457,18 +500,34 @@ const handleChatRequest = async (req, res) => {
   }
   let { provider_type, base_url, api_key, model_name, system_prompt, messages } = req.body || {};
 
+  // 环境变量中预设的中转站/代理地址，优先使用以防中转站地址在前端泄露
+  const envBaseUrl = process.env.BASE_URL || process.env.OPENAI_BASE_URL || process.env.API_BASE_URL;
+
   if (!api_key) {
-    if (provider_type === 'gemini' && process.env.GEMINI_API_KEY) {
-      api_key = process.env.GEMINI_API_KEY;
-    } else if (provider_type === 'anthropic' && process.env.ANTHROPIC_API_KEY) {
+    if (provider_type === 'gemini') {
+      api_key = process.env.GEMINI_API_KEY || (envBaseUrl ? process.env.OPENAI_API_KEY : null);
+    } else if (provider_type === 'anthropic') {
       api_key = process.env.ANTHROPIC_API_KEY;
-    } else if (process.env.OPENAI_API_KEY) {
+    } else if (provider_type === 'dashscope_app') {
+      api_key = process.env.DASHSCOPE_API_KEY || process.env.OPENAI_API_KEY;
+    } else {
+      // openai_compatible
       api_key = process.env.OPENAI_API_KEY;
+      // 容错：如果未配置 OPENAI_API_KEY，但单独配置了 GEMINI 或 ANTHROPIC KEY，则智能兜底
+      if (!api_key && process.env.GEMINI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+        api_key = process.env.GEMINI_API_KEY;
+        provider_type = 'gemini';
+        model_name = model_name && model_name.includes('gemini') ? model_name : 'gemini-1.5-flash';
+      } else if (!api_key && process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+        api_key = process.env.ANTHROPIC_API_KEY;
+        provider_type = 'anthropic';
+        model_name = model_name && model_name.includes('claude') ? model_name : 'claude-3-5-sonnet-20241022';
+      }
     }
   }
 
   if (!api_key) {
-    return res.status(400).json({ error: '请先配置 API Key 以后再测试 AI 对话' });
+    return res.status(400).json({ error: `未检测到有效的 API Key。请在前端面板填写，或在服务端 .env 文件中添加对应的 ${provider_type.toUpperCase()}_API_KEY` });
   }
 
   const timeoutMs = 35000;
@@ -478,7 +537,8 @@ const handleChatRequest = async (req, res) => {
   try {
     if (provider_type === 'gemini') {
       const model = model_name || 'gemini-1.5-flash';
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${api_key}`;
+      const geminiHost = envBaseUrl ? envBaseUrl.replace(/\/+$/, '') : 'https://generativelanguage.googleapis.com';
+      const url = `${geminiHost}/v1beta/models/${model}:generateContent?key=${api_key}`;
       const contents = (messages || []).map(m => ({
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }]
@@ -501,7 +561,8 @@ const handleChatRequest = async (req, res) => {
       if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}: ${JSON.stringify(data)}`);
       return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
     } else if (provider_type === 'anthropic') {
-      const url = (base_url || 'https://api.anthropic.com/v1').replace(/\/+$/, '') + '/messages';
+      const targetBase = (envBaseUrl || base_url || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
+      const url = targetBase + '/messages';
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -529,8 +590,8 @@ const handleChatRequest = async (req, res) => {
       if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}: ${JSON.stringify(data)}`);
       return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
     } else if (provider_type === 'dashscope_app') {
-      const effectiveBaseUrl = base_url || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-      const url = effectiveBaseUrl.replace(/\/+$/, '') + '/chat/completions';
+      const targetBase = (envBaseUrl || base_url || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
+      const url = targetBase + '/chat/completions';
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -556,7 +617,8 @@ const handleChatRequest = async (req, res) => {
       return res.json({ reply: typeof data === 'string' ? data : JSON.stringify(data) });
     } else {
       // openai_compatible
-      const url = (base_url || 'https://api.openai.com/v1').replace(/\/+$/, '') + '/chat/completions';
+      const targetBase = (envBaseUrl || base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
+      const url = targetBase + '/chat/completions';
       const response = await fetch(url, {
         method: 'POST',
         headers: {

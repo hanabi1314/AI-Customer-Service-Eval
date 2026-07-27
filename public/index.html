@@ -1115,6 +1115,64 @@
                     this.updateActiveVersionJson();
                 },
 
+                async loadDataFromServer() {
+                    if (!window.location.protocol.startsWith('http')) return;
+                    try {
+                        // 1. 拉取全局配置
+                        const configRes = await fetch('/api/config');
+                        if (configRes.ok) {
+                            const remoteConfig = await configRes.json();
+                            if (remoteConfig) {
+                                const { promptVersions, activePromptVersionId, ...restConfig } = remoteConfig;
+                                this.config = { ...this.config, ...restConfig };
+                                if (Array.isArray(promptVersions) && promptVersions.length > 0) {
+                                    this.promptVersions = promptVersions;
+                                }
+                                if (activePromptVersionId) {
+                                    this.activePromptVersionId = activePromptVersionId;
+                                }
+                            }
+                        }
+
+                        // 2. 拉取商品列表
+                        const productsRes = await fetch('/api/products');
+                        if (productsRes.ok) {
+                            const remoteProducts = await productsRes.json();
+                            if (Array.isArray(remoteProducts) && remoteProducts.length > 0) {
+                                this.products = remoteProducts;
+                            }
+                        }
+
+                        // 3. 拉取所有会话记录
+                        const sessionsRes = await fetch('/api/sessions');
+                        if (sessionsRes.ok) {
+                            const remoteSessions = await sessionsRes.json();
+                            if (Array.isArray(remoteSessions)) {
+                                remoteSessions.forEach(s => {
+                                    if (s.product_id) {
+                                        let history = [];
+                                        try {
+                                            history = typeof s.chat_history === 'string' ? JSON.parse(s.chat_history) : (s.chat_history || []);
+                                        } catch (e) {}
+                                        this.chatSessions[s.product_id] = {
+                                            messages: history,
+                                            bargainCount: s.bargain_count || 0
+                                        };
+                                    }
+                                });
+                            }
+                        }
+
+                        if (!this.selectedProductId && this.products.length > 0) {
+                            this.selectedProductId = this.products[0].id;
+                        }
+                        this.saveToStorage();
+                        this.updateActiveVersionJson();
+                    } catch (e) {
+                        console.warn('[API Load] 服务器加载数据失败，使用本地缓存或初始预设:', e.message);
+                    }
+                },
+
                 loadFromStorage() {
                     try {
                         const savedConfig = localStorage.getItem('appConfig');
@@ -1167,8 +1225,80 @@
                     }
                 },
 
+                // 异步将配置与提示词版本同步至后端数据库
+                async syncConfigToServer() {
+                    if (!window.location.protocol.startsWith('http')) return;
+                    try {
+                        const payload = {
+                            ...this.config,
+                            promptVersions: this.promptVersions,
+                            activePromptVersionId: this.activePromptVersionId
+                        };
+                        await fetch('/api/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                    } catch (e) {
+                        console.error('[Config Sync Error]', e);
+                    }
+                },
+
+                // 异步将单个商品修改同步至后端数据库
+                async syncProductToServer(product) {
+                    if (!window.location.protocol.startsWith('http') || !product) return;
+                    try {
+                        await fetch('/api/products', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                id: product.id,
+                                title: product.title,
+                                price: product.price,
+                                desc: product.desc,
+                                ai_prompt: product.ai_prompt
+                            })
+                        });
+                    } catch (e) {
+                        console.error('[Product Sync Error]', e);
+                    }
+                },
+
+                // 异步删除服务器/数据库中的指定商品
+                async syncDeleteProductFromServer(id) {
+                    if (!window.location.protocol.startsWith('http') || !id) return;
+                    try {
+                        await fetch(`/api/products/${id}`, {
+                            method: 'DELETE'
+                        });
+                    } catch (e) {
+                        console.error('[Product Delete Error]', e);
+                    }
+                },
+
+                // 异步同步会话聊天记录到数据库
+                async syncSessionToServer(productId) {
+                    if (!window.location.protocol.startsWith('http') || !productId) return;
+                    const session = this.chatSessions[productId];
+                    if (!session) return;
+                    try {
+                        await fetch('/api/sessions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                product_id: productId,
+                                chat_history: JSON.stringify(session.messages || []),
+                                bargain_count: session.bargainCount || 0
+                            })
+                        });
+                    } catch (e) {
+                        console.error('[Session Sync Error]', e);
+                    }
+                },
+
                 onPromptVersionChange() {
                     this.saveToStorage();
+                    this.syncConfigToServer();
                     this.updateActiveVersionJson();
                     this.showToast(`已切换提示词版本为: ${this.activePromptVersion?.name}`);
                 },
@@ -1187,6 +1317,7 @@
                             if (idx !== -1) {
                                 this.promptVersions[idx] = { ...this.promptVersions[idx], ...parsed };
                                 this.saveToStorage();
+                                this.syncConfigToServer();
                             }
                         }
                     } catch (e) {
@@ -1196,8 +1327,9 @@
 
                 savePromptVersions(showToast = false) {
                     this.saveToStorage();
+                    this.syncConfigToServer();
                     this.updateActiveVersionJson();
-                    if (showToast) this.showToast('提示词版本配置已保存');
+                    if (showToast) this.showToast('提示词版本配置已同步保存至数据库');
                 },
 
                 openCreateVersionModal() {
@@ -1255,7 +1387,8 @@
 
                 saveConfig() {
                     this.saveToStorage();
-                    this.showToast('全局配置已成功保存');
+                    this.syncConfigToServer();
+                    this.showToast('全局配置已成功保存并同步数据库');
                 },
 
                 resetConfig() {
@@ -1272,6 +1405,7 @@
                         default_keywords: '在吗, 还在吗, 快递, 包邮, 发货, 什么时候发, 拍下'
                     };
                     this.saveToStorage();
+                    this.syncConfigToServer();
                     this.showToast('已重置为默认配置');
                 },
 
@@ -1304,12 +1438,17 @@
                     }
                     this.activeMobileView = 'sidebar';
                     this.saveToStorage();
+                    this.syncProductToServer(newProduct);
                     this.showToast('已新建测试商品，请直接在此展开编辑');
                 },
 
                 updateProduct() {
                     this.saveToStorage();
-                    this.showToast('商品信息保存成功');
+                    const p = this.products.find(item => String(item.id) === String(this.editingProductId || this.selectedProductId));
+                    if (p) {
+                        this.syncProductToServer(p);
+                    }
+                    this.showToast('商品信息已成功修改并更新至数据库');
                 },
 
                 duplicateProduct(id) {
@@ -1330,6 +1469,7 @@
 
                     this.selectProduct(newId);
                     this.saveToStorage();
+                    this.syncProductToServer(newProduct);
                     this.showToast('已复制商品“' + source.title + '”');
                 },
 
@@ -1354,7 +1494,8 @@
                             }
 
                             this.saveToStorage();
-                            this.showToast('商品已成功删除');
+                            this.syncDeleteProductFromServer(idToDelete);
+                            this.showToast('商品已从数据库成功删除');
                         }
                     });
                 },
@@ -1369,6 +1510,7 @@
                         onConfirm: () => {
                             this.chatSessions[this.selectedProductId] = { messages: [], bargainCount: 0 };
                             this.saveToStorage();
+                            this.syncSessionToServer(this.selectedProductId);
                             this.showToast('对话历史已清空');
                         }
                     });
@@ -1378,6 +1520,7 @@
                     if (!this.selectedProductId || !this.chatSessions[this.selectedProductId]) return;
                     this.chatSessions[this.selectedProductId].bargainCount = 0;
                     this.saveToStorage();
+                    this.syncSessionToServer(this.selectedProductId);
                     this.showToast('议价轮次已重置为 0');
                 },
 
@@ -1546,6 +1689,7 @@
                         };
 
                         this.saveToStorage();
+                        this.syncSessionToServer(productId);
                     } catch (err) {
                         session.messages.push({
                             role: 'assistant',
@@ -1687,6 +1831,7 @@
             },
             mounted() {
                 this.loadFromStorage();
+                this.loadDataFromServer();
                 this.updateDarkMode();
             }
         }).mount('#app');
