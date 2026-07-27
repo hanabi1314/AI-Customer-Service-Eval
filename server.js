@@ -103,6 +103,19 @@ let products = [
 let chatSessions = {};
 let nextSessionId = 1;
 
+let defaultPromptVersions = [
+  {
+    id: 'v1',
+    name: '标准场景 (默认生产版本)',
+    author: '系统预设',
+    prompts: {
+      price: "你是一位专业且有礼貌的二手客服。根据买家提出的降价要求进行合理谈判。\n- 标价: ¥{price}\n- 当前降价底线: 不得低于优惠后的极限价格\n- 议价原则: 语气诚恳，解释商品质量与成本，若超出允许的最大降价幅度或超过限定轮次，请礼貌拒绝。",
+      tech: "你是一位精通各类数码与商品参数的专家客服。\n- 根据【商品详情描述】耐心回答买家的成色、参数、配件、拆修情况等细节。\n- 务必基于已知事实回答，未提及的细节要诚实说明。",
+      default: "你是一位热情周到的客服。\n- 友好解答关于是否在售、包邮发货时间等常见日常问答。\n- 引导有诚意的买家下单。"
+    }
+  }
+];
+
 let globalConfig = {
   provider_type: 'openai_compatible',
   base_url: 'https://api.openai.com/v1',
@@ -114,6 +127,8 @@ let globalConfig = {
   price_keywords: '便宜, 优惠, 刀, 降价, 价格, 多少钱, 能少, 还能, 最低, 底价, 实诚价, 到100, 能到, 包个邮, 少点, 便宜点',
   tech_keywords: '怎么用, 参数, 坏了, 故障, 设置, 说明书, 功能, 用法, 教程, 驱动, 尺码, 新旧, 正品, 拆过, 修过',
   default_keywords: '在吗, 还在吗, 快递, 包邮, 发货, 什么时候发, 拍下',
+  promptVersions: defaultPromptVersions,
+  activePromptVersionId: 'v1',
   custom_prompts: {
     price: '你是一个专业的闲鱼卖家助手。用户在询问价格优惠。商品：{title}，价格：{price}元。最大优惠：{max_discount}% 或 {max_discount_amount}元。已议价{bargain_count}轮，最多{max_rounds}轮。请友好回复。',
     tech: '你是一个专业的产品技术支持。用户在咨询商品细节。商品：{title}，描述：{desc}。请专业解答。',
@@ -503,17 +518,17 @@ const handleChatRequest = async (req, res) => {
   // 环境变量中预设的中转站/代理地址，优先使用以防中转站地址在前端泄露
   const envBaseUrl = process.env.BASE_URL || process.env.OPENAI_BASE_URL || process.env.API_BASE_URL;
 
-  if (!api_key) {
+  // 如果前端未传 api_key (或传了空字符串/空格)，自动从环境变量多维提取
+  if (!api_key || (typeof api_key === 'string' && !api_key.trim())) {
     if (provider_type === 'gemini') {
-      api_key = process.env.GEMINI_API_KEY || (envBaseUrl ? process.env.OPENAI_API_KEY : null);
+      api_key = process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.OPENAI_API_KEY;
     } else if (provider_type === 'anthropic') {
-      api_key = process.env.ANTHROPIC_API_KEY;
+      api_key = process.env.ANTHROPIC_API_KEY || process.env.API_KEY;
     } else if (provider_type === 'dashscope_app') {
-      api_key = process.env.DASHSCOPE_API_KEY || process.env.OPENAI_API_KEY;
+      api_key = process.env.DASHSCOPE_API_KEY || process.env.OPENAI_API_KEY || process.env.API_KEY;
     } else {
-      // openai_compatible
-      api_key = process.env.OPENAI_API_KEY;
-      // 容错：如果未配置 OPENAI_API_KEY，但单独配置了 GEMINI 或 ANTHROPIC KEY，则智能兜底
+      // openai_compatible 或通用模式
+      api_key = process.env.OPENAI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.DASHSCOPE_API_KEY;
       if (!api_key && process.env.GEMINI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         api_key = process.env.GEMINI_API_KEY;
         provider_type = 'gemini';
@@ -526,9 +541,10 @@ const handleChatRequest = async (req, res) => {
     }
   }
 
-  if (!api_key) {
-    return res.status(400).json({ error: `未检测到有效的 API Key。请在前端面板填写，或在服务端 .env 文件中添加对应的 ${provider_type.toUpperCase()}_API_KEY` });
+  if (!api_key || (typeof api_key === 'string' && !api_key.trim())) {
+    return res.status(400).json({ error: `未检测到有效的 API Key。请在前端面板填写，或在服务端 .env 文件中添加 OPENAI_API_KEY、GEMINI_API_KEY 或 API_KEY` });
   }
+  api_key = String(api_key).trim();
 
   const timeoutMs = 35000;
   const controller = new AbortController();

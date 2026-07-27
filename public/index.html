@@ -396,22 +396,22 @@
                                 
                                 <div>
                                     <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{{ t('productTitleLabel') }}</label>
-                                    <input v-model="product.title" @change="saveToStorage" type="text" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500">
+                                    <input v-model="product.title" @input="onProductInputChange(product)" @change="saveToStorage" type="text" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500">
                                 </div>
                                 
                                 <div>
                                     <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{{ t('productPriceLabel') }}</label>
-                                    <input v-model.number="product.price" @change="saveToStorage" type="number" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500" step="0.01">
+                                    <input v-model.number="product.price" @input="onProductInputChange(product)" @change="saveToStorage" type="number" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500" step="0.01">
                                 </div>
                                 
                                 <div>
                                     <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">{{ t('productDescLabel') }}</label>
-                                    <textarea v-model="product.desc" @change="saveToStorage" rows="3" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500"></textarea>
+                                    <textarea v-model="product.desc" @input="onProductInputChange(product)" @change="saveToStorage" rows="3" class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-blue-500"></textarea>
                                 </div>
                                 
                                 <div>
                                     <label class="block text-xs font-bold text-purple-700 dark:text-purple-400 mb-1">{{ t('productAIPromptLabel') }}</label>
-                                    <textarea v-model="product.ai_prompt" @change="saveToStorage" rows="2" class="w-full bg-white dark:bg-slate-700 border border-purple-200 dark:border-purple-800 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-purple-500" placeholder="针对该商品的特别指示，如不准少于某价格、赠品提示等..."></textarea>
+                                    <textarea v-model="product.ai_prompt" @input="onProductInputChange(product)" @change="saveToStorage" rows="2" class="w-full bg-white dark:bg-slate-700 border border-purple-200 dark:border-purple-800 text-slate-800 dark:text-slate-100 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-purple-500" placeholder="针对该商品的特别指示，如不准少于某价格、赠品提示等..."></textarea>
                                 </div>
                                 
                                 <div class="flex gap-2 pt-1">
@@ -1115,10 +1115,14 @@
                     this.updateActiveVersionJson();
                 },
 
+                isHttpServer() {
+                    return window.location.protocol.startsWith('http');
+                },
+
                 async loadDataFromServer() {
-                    if (!window.location.protocol.startsWith('http')) return;
+                    if (!this.isHttpServer()) return;
                     try {
-                        // 1. 拉取全局配置
+                        // 1. 拉取全局配置与提示词版本
                         const configRes = await fetch('/api/config');
                         if (configRes.ok) {
                             const remoteConfig = await configRes.json();
@@ -1127,8 +1131,11 @@
                                 this.config = { ...this.config, ...restConfig };
                                 if (Array.isArray(promptVersions) && promptVersions.length > 0) {
                                     this.promptVersions = promptVersions;
+                                } else {
+                                    // 若服务器端尚无版本配置，初始化同步写入服务端
+                                    await this.syncConfigToServer();
                                 }
-                                if (activePromptVersionId) {
+                                if (activePromptVersionId && this.promptVersions.some(v => String(v.id) === String(activePromptVersionId))) {
                                     this.activePromptVersionId = activePromptVersionId;
                                 }
                             }
@@ -1140,6 +1147,11 @@
                             const remoteProducts = await productsRes.json();
                             if (Array.isArray(remoteProducts) && remoteProducts.length > 0) {
                                 this.products = remoteProducts;
+                            } else if (this.products && this.products.length > 0) {
+                                // 若数据库商品库为空，将默认商品同步写入数据库
+                                for (const p of this.products) {
+                                    await this.syncProductToServer(p);
+                                }
                             }
                         }
 
@@ -1148,6 +1160,7 @@
                         if (sessionsRes.ok) {
                             const remoteSessions = await sessionsRes.json();
                             if (Array.isArray(remoteSessions)) {
+                                this.chatSessions = {};
                                 remoteSessions.forEach(s => {
                                     if (s.product_id) {
                                         let history = [];
@@ -1169,12 +1182,29 @@
                         this.saveToStorage();
                         this.updateActiveVersionJson();
                     } catch (e) {
-                        console.warn('[API Load] 服务器加载数据失败，使用本地缓存或初始预设:', e.message);
+                        console.warn('[API Load] 服务器加载数据失败:', e.message);
                     }
                 },
 
                 loadFromStorage() {
                     try {
+                        // 1. 优先加载界面语言与主题模式偏好
+                        const savedLang = localStorage.getItem('language');
+                        if (savedLang) this.language = savedLang;
+
+                        const savedDark = localStorage.getItem('isDarkMode');
+                        if (savedDark !== null) this.isDarkMode = savedDark === 'true';
+
+                        const savedSelectedId = localStorage.getItem('selectedProductId');
+                        if (savedSelectedId) this.selectedProductId = savedSelectedId;
+
+                        // 2. 在 HTTP 服务端模式下，业务资料一律由数据库/后端文件掌控，跳过 LocalStorage 资料载入
+                        if (this.isHttpServer()) {
+                            this.updateActiveVersionJson();
+                            return;
+                        }
+
+                        // 3. 离线模式 (file:// 打开) 下从 LocalStorage 加载数据资料
                         const savedConfig = localStorage.getItem('appConfig');
                         if (savedConfig) this.config = { ...this.config, ...JSON.parse(savedConfig) };
 
@@ -1192,13 +1222,6 @@
                         const savedSessions = localStorage.getItem('chatSessions');
                         if (savedSessions) this.chatSessions = JSON.parse(savedSessions);
 
-                        const savedSelectedId = localStorage.getItem('selectedProductId');
-                        if (savedSelectedId && this.products.some(p => String(p.id) === String(savedSelectedId))) {
-                            this.selectedProductId = savedSelectedId;
-                        } else if (this.products.length > 0) {
-                            this.selectedProductId = this.products[0].id;
-                        }
-
                         if (!this.products || this.products.length === 0 || !this.promptVersions || this.promptVersions.length === 0) {
                             this.initDefaultData();
                             this.saveToStorage();
@@ -1206,23 +1229,49 @@
                         this.updateActiveVersionJson();
                     } catch (e) {
                         console.error("加载存储失败, 使用默认值:", e);
-                        this.initDefaultData();
+                        if (!this.isHttpServer()) {
+                            this.initDefaultData();
+                        }
                     }
                 },
 
                 saveToStorage() {
                     try {
+                        // 保存界面偏好 (语言、暗黑模式、选中的商品高亮)
+                        localStorage.setItem('language', this.language || 'zh');
+                        localStorage.setItem('isDarkMode', this.isDarkMode ? 'true' : 'false');
+                        if (this.selectedProductId) {
+                            localStorage.setItem('selectedProductId', String(this.selectedProductId));
+                        }
+
+                        // 在 HTTP 服务端模式（MySQL / 文件持久化）下，清理旧业务 localStorage 键，避免占用或污染
+                        if (this.isHttpServer()) {
+                            localStorage.removeItem('appConfig');
+                            localStorage.removeItem('products');
+                            localStorage.removeItem('promptVersions');
+                            localStorage.removeItem('activePromptVersionId');
+                            localStorage.removeItem('chatSessions');
+                            return;
+                        }
+
+                        // 离线模式下将资料保存至 LocalStorage
                         localStorage.setItem('appConfig', JSON.stringify(this.config));
                         localStorage.setItem('products', JSON.stringify(this.products));
                         localStorage.setItem('promptVersions', JSON.stringify(this.promptVersions));
                         localStorage.setItem('activePromptVersionId', String(this.activePromptVersionId));
                         localStorage.setItem('chatSessions', JSON.stringify(this.chatSessions));
-                        if (this.selectedProductId) {
-                            localStorage.setItem('selectedProductId', String(this.selectedProductId));
-                        }
                     } catch (e) {
                         console.error("保存存储失败:", e);
                     }
+                },
+
+                // 实时防抖更新商品数据
+                onProductInputChange(product) {
+                    this.saveToStorage();
+                    if (this._prodSyncTimer) clearTimeout(this._prodSyncTimer);
+                    this._prodSyncTimer = setTimeout(() => {
+                        this.syncProductToServer(product);
+                    }, 500);
                 },
 
                 // 异步将配置与提示词版本同步至后端数据库
@@ -1627,6 +1676,7 @@
                     this.inputMessage = '';
                     this.isLoading = true;
                     this.saveToStorage();
+                    this.syncSessionToServer(productId);
                     this.scrollToBottom();
 
                     const startTime = Date.now();
@@ -1650,20 +1700,18 @@
                         let resText = '';
                         
                         if (window.location.protocol.startsWith('http')) {
-                            try {
-                                const response = await fetch('/api/chat', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify(requestPayload)
-                                });
-                                const data = await response.json();
-                                if (data && data.reply) {
-                                    resText = data.reply;
-                                } else if (data && data.error) {
-                                    throw new Error(data.error);
-                                }
-                            } catch (e) {
-                                resText = await this.fallbackDirectApiCall(requestPayload);
+                            const response = await fetch('/api/chat', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(requestPayload)
+                            });
+                            const data = await response.json().catch(() => ({}));
+                            if (response.ok && data && data.reply) {
+                                resText = data.reply;
+                            } else if (data && data.error) {
+                                throw new Error(data.error);
+                            } else {
+                                throw new Error(`请求服务端接口失败 (HTTP ${response.status})`);
                             }
                         } else {
                             resText = await this.fallbackDirectApiCall(requestPayload);
@@ -1697,6 +1745,8 @@
                             intent: intent,
                             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         });
+                        this.saveToStorage();
+                        this.syncSessionToServer(productId);
                         this.showToast('AI 响应异常，请检查 API 配置', 'error');
                     } finally {
                         this.isLoading = false;
@@ -1829,9 +1879,11 @@
                     this.debugInfo = null;
                 }
             },
-            mounted() {
+            async mounted() {
                 this.loadFromStorage();
-                this.loadDataFromServer();
+                if (this.isHttpServer()) {
+                    await this.loadDataFromServer();
+                }
                 this.updateDarkMode();
             }
         }).mount('#app');
